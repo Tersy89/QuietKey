@@ -1,0 +1,49 @@
+QuietKey local verification — 3 October 2026
+
+Source: QuietKey-Android-source-1.zip
+Local working copy: this QuietKey directory, outside read-only sources/.
+The original archive had README.md, SECURITY.md and VERIFICATION.txt, but no TESTING.md.
+Source and the verified test APK are shared via the owner's private GitHub
+repository at their request. No public publishing or device-log upload.
+
+Toolchain:
+- Checksum-verified Temurin JDK 17.0.20.1+1 in .local-tools/.
+- Gradle 8.9 wrapper, distribution SHA-256 pinned.
+- Android Gradle Plugin 8.7.3, compile/target SDK 35, minimum SDK 26.
+- Android SDK Platform 35 and Build Tools 34.0.0 installed in existing SDK.
+- local.properties and local tool downloads are excluded from version control.
+
+PASS: 21 portable JVM protocol checks using JDK 17.
+PASS: UTF-8 Java syntax parsing for all 7 Java source/test files.
+PASS: Gradle testDebugUnitTest (1 JUnit entry runs the 21 protocol checks; no failures/errors).
+PASS: assembleDebug; app/build/outputs/apk/debug/app-debug.apk produced.
+PASS: assembleDebugAndroidTest; instrumentation test APK produced (not executed).
+PASS: lintDebug; 0 errors, 20 warnings. Remaining warnings concern localization,
+      portrait orientation, missing launcher icon and available newer dependencies.
+PASS: APK signature verified by apksigner (APK Signature Scheme v2).
+PASS: Built APK inspected with aapt: app.quietkey.debug, label QuietKey (test),
+      min SDK 26, target SDK 35; no Internet or microphone permission.
+      CAMERA plus AndroidX's app-specific signature permission are present.
+PASS: Merged app manifest inspected: backups and device-transfer backup disabled.
+
+Debug APK SHA-256:
+C24D24F34BAF8F897B5D142F35794C4C03DD07B46FF855796538CB28104A12EB
+
+Fixed:
+- Conflicting transitive Kotlin libraries prevented the original APK build.
+  Added Kotlin BOM 1.8.22 to align versions.
+- Replaced numeric UI constants rejected by Android lint; made tab casing explicit.
+- Camera startup time no longer counts toward five seconds of live input.
+- Camera capture screen now pads around system bars and uses display-density units.
+- Syntax parser and Windows protocol helper now explicitly use UTF-8.
+- Added Gradle wrapper, Windows development helper and TESTING.md.
+- Test app uses a separate app ID/vault; device test uses an isolated temporary vault.
+- Expanded device test to reject replay after reload and reject a tampered vault.
+
+NOT RUN: connectedDebugAndroidTest (adb devices lists no attached devices).
+NOT RUN: Actual phone launch, Keystore behavior, permissions, camera capture,
+         QR scanning, two-phone pairing and screenshot/background behavior.
+NOT PERFORMED: Independent security audit.
+
+For phone setup and testing, see TESTING.md. Keep the test installation's keys
+and debug signing key if you need to retain access; do not clear storage or uninstall.
