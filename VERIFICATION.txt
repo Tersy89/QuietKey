@@ -1,49 +1,77 @@
-QuietKey local verification — 3 October 2026
+Enigma 0.2.0 local verification — 3 October 2026
 
-Source: QuietKey-Android-source-1.zip
-Local working copy: this QuietKey directory, outside read-only sources/.
-The original archive had README.md, SECURITY.md and VERIFICATION.txt, but no TESTING.md.
-Source and the verified test APK are shared via the owner's private GitHub
-repository at their request. No public publishing or device-log upload.
+Source: QuietKey-Android-source-1.zip, continued in editable QuietKey directory.
+Read-only synced sources/ were not changed. Original README.md, SECURITY.md and
+VERIFICATION.txt were read first; the original archive had no TESTING.md.
+Source/APK shared only in the owner's private GitHub repo at their request.
+No signing keys, local tool downloads, emulator previews or device logs uploaded.
 
 Toolchain:
-- Checksum-verified Temurin JDK 17.0.20.1+1 in .local-tools/.
-- Gradle 8.9 wrapper, distribution SHA-256 pinned.
-- Android Gradle Plugin 8.7.3, compile/target SDK 35, minimum SDK 26.
-- Android SDK Platform 35 and Build Tools 34.0.0 installed in existing SDK.
-- local.properties and local tool downloads are excluded from version control.
+- Checksum-verified Temurin JDK 17.0.20.1+1 in ignored .local-tools/.
+- Gradle 8.9 wrapper with pinned distribution SHA-256; AGP 8.7.3.
+- compile/target SDK 35, min SDK 26, Build Tools 34.0.0.
+- Disposable EnigmaTest emulator: Android 15 / API 35, x86_64 Google APIs,
+  emulated back camera, Windows hypervisor, no physical phone connected.
 
-PASS: 21 portable JVM protocol checks using JDK 17.
-PASS: UTF-8 Java syntax parsing for all 7 Java source/test files.
-PASS: Gradle testDebugUnitTest (1 JUnit entry runs the 21 protocol checks; no failures/errors).
-PASS: assembleDebug; app/build/outputs/apk/debug/app-debug.apk produced.
-PASS: assembleDebugAndroidTest; instrumentation test APK produced (not executed).
-PASS: lintDebug; 0 errors, 20 warnings. Remaining warnings concern localization,
-      portrait orientation, missing launcher icon and available newer dependencies.
-PASS: APK signature verified by apksigner (APK Signature Scheme v2).
-PASS: Built APK inspected with aapt: app.quietkey.debug, label QuietKey (test),
-      min SDK 26, target SDK 35; no Internet or microphone permission.
-      CAMERA plus AndroidX's app-specific signature permission are present.
-PASS: Merged app manifest inspected: backups and device-transfer backup disabled.
+PASS: original 21 dependency-free protocol checks, including legacy QKM1,
+      owner-only pairing checks and RFC 5869 HKDF vector.
+PASS: Gradle testDebugUnitTest: 25 JUnit entries, 0 failures/errors;
+      1 entry runs the original 21 checks, 7 private-text tests and 17 file tests.
+      Total 45 portable checks. Covers recipient/sender access, third-member
+      rejection despite same seed, wrong key/group/sender, expiry/replay,
+      signatures/GCM, binary files, empty/chunk boundary, encrypted metadata,
+      repeated explicit restore, invalid framing/truncation, size limit and
+      filename sanitization.
+PASS: UTF-8 syntax parsing of all 13 Java files.
+PASS: assembleDebug and assembleDebugAndroidTest.
+PASS: lintDebug: 0 errors, 20 warnings (localization, portrait orientation,
+      newer dependency/tool versions and similar nonfatal items).
+PASS: connectedDebugAndroidTest on disposable emulator: 3/3, no skips/failures.
+      - Real Android Keystore OAEP/signing and private text in both directions.
+      - Encrypted vault persistence, durable text replay and corrupt-vault rejection.
+      - Real Keystore private-file unwrap/signing, 150,000-byte exact restoration,
+        persisted aliases/setup state and file-open history.
+      - UI: first-run device naming, live 5-second/60-frame emulated camera,
+        tab/member navigation, background draft clearing and FLAG_SECURE.
+      - Actual Android document picker: choose 200,000-byte binary source,
+        encrypt, Save encrypted file, reopen, verify, Save restored file;
+        restored bytes exactly equal source.
+PASS: Six test-only UI previews inspected locally (setup/home/text/files/groups/
+      device), including dark theme, shield, controls, tabs and scroll reachability.
+PASS: Windows device-tests helper installs app/test APK updates and executes
+      instrumentation directly. Two Keystore tests pass; opt-in UI is skipped.
+      Re-running it after a populated emulator vault keeps the encrypted vault
+      hash unchanged and leaves app installed. Gradle connected tests uninstall
+      their target and are explicitly discouraged for a retained phone install.
+PASS: APK signature v2 verifies; signer matches previous QuietKey 0.1 test APK.
+      Certificate SHA-256:
+      2aca54e2570fbbd3caaf35a523c8c21a19d3cf553eaf53937590905d402836b7
+PASS: APK inspected: app.quietkey.debug, versionCode 2, versionName 0.2.0-debug,
+      label Enigma (test), new shield icon, min SDK 26, target SDK 35.
+      Permissions: CAMERA and AndroidX app-specific signature permission only;
+      no Internet, microphone or broad storage permission.
+PASS: Manifest: backups/device-transfer backup disabled; nonexported FileProvider
+      grants access only to encrypted cache packages. Screenshot flags retained.
 
-Debug APK SHA-256:
-C24D24F34BAF8F897B5D142F35794C4C03DD07B46FF855796538CB28104A12EB
+Enigma.apk SHA-256:
+09DAC5C5BB20901A663738A3044C8A50CC54583BC12FD0C7B80586FF19F2BF54
 
-Fixed:
-- Conflicting transitive Kotlin libraries prevented the original APK build.
-  Added Kotlin BOM 1.8.22 to align versions.
-- Replaced numeric UI constants rejected by Android lint; made tab casing explicit.
-- Camera startup time no longer counts toward five seconds of live input.
-- Camera capture screen now pads around system bars and uses display-density units.
-- Syntax parser and Windows protocol helper now explicitly use UTF-8.
-- Added Gradle wrapper, Windows development helper and TESTING.md.
-- Test app uses a separate app ID/vault; device test uses an isolated temporary vault.
-- Expanded device test to reject replay after reload and reject a tampered vault.
+New behavior:
+- Enigma branding and dark shield theme; Home/Text/Files/Groups/Device navigation.
+- First-run device name and camera-derived personal group seed; device RSA key
+  remains Android Keystore generated. No video recording or private-key export.
+- New text and files encrypted to a verified group recipient plus sender.
+  QKD1 uses fresh hybrid content keys; old shared QKM1 remains readable/labeled.
+- Generic files up to 50 MiB, encrypted metadata, authenticated chunks, whole-file
+  signature verification before explicit restored-file export; no plaintext cache.
+- Local group names, member aliases/fingerprints, recipient choices and trust removal.
+  Local removal does not revoke another device's keys; lists are not synchronized.
+- Existing app IDs, key aliases and vault format preserved; optional fields added.
 
-NOT RUN: connectedDebugAndroidTest (adb devices lists no attached devices).
-NOT RUN: Actual phone launch, Keystore behavior, permissions, camera capture,
-         QR scanning, two-phone pairing and screenshot/background behavior.
-NOT PERFORMED: Independent security audit.
+NOT RUN: Physical-phone camera, permission/cancel paths, QR scanning/two-phone
+         pairing, vendor Keystore checks, 0.1-to-0.2 retention on user's phone,
+         external messenger delivery and large-font/accessibility checks.
+NOT PERFORMED: Independent cryptographic/security audit.
 
-For phone setup and testing, see TESTING.md. Keep the test installation's keys
-and debug signing key if you need to retain access; do not clear storage or uninstall.
+Install Enigma.apk over the existing test app; never uninstall or clear storage
+for troubleshooting keys you need. TESTING.md has phone steps and manual checks.

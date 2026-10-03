@@ -1,57 +1,67 @@
-# Security design and limits
+# Enigma security design and limits
 
-This is an unaudited prototype with a custom message/pairing protocol. Obtain an independent cryptographic review and real-device testing before relying on it for sensitive communication.
+This is an unaudited prototype with custom pairing, text and file protocols. It has no ratchet, forward secrecy or post-compromise recovery. A device identity denotes an installation, not a person. Public-key fingerprints must be compared in person; a scanned QR alone does not authenticate someone.
 
-## Ownership and groups
+## Keys and camera setup
 
-Every group stores the SHA-256 fingerprint of its creator's installation identity. `Protocol.invite()` checks that the sending public key matches this stored creator. Invitations are signed with that installation's Android Keystore private key. The receiver verifies the signature, unwraps a seed encrypted for its own identity, and confirms the creator's full fingerprint in person. Imported invitations always identify their signer as creator; physical fingerprint verification is essential. QR scanning alone does not authenticate a person.
+Android Keystore generates a non-exportable RSA-2048 identity and a separate AES-256 vault key. Existing QuietKey app IDs, aliases and vault AAD are retained for upgrades. Hardware backing depends on the device. There is no additional biometric/app PIN gate: someone using an unlocked device can act through the app.
 
-All participants necessarily have the shared secret to decrypt messages. **Owner-only sharing is an official-client policy, not a cryptographic guarantee against a malicious participant.** A rooted/modified device, instrumentation, or a rewritten client can export the seed, plaintext, or manufacture a new invitation claiming another creator. Non-exportable local storage keys protect stored files; they cannot make a shared secret unknowable to a device that uses it. The app does not export seed QR codes or offer a member invitation button.
+Camera capture hashes live YUV planes and timestamps over at least 60 frames and five seconds measured from the first frame. No recording or audio is saved. Group seed creation uses HKDF-SHA256(input = 32 fresh OS SecureRandom bytes, salt = camera digest, info = UTF-8 `QuietKey/group-seed/v1`), yielding 32 bytes. Each group has a UUID, independent seed, creator fingerprint and ten-year expiry. Personal setup creates one such group for the device itself. Camera input does not generate the RSA private key or establish a measurable amount of entropy. Ten-year expiry is a local clock policy, not a ten-year confidentiality guarantee or one-time pad.
 
-A device identity denotes an installation, not a human. This version uses device-level Android security but has no additional biometric/app PIN gate. Anyone using an unlocked device can act through its app. Changing this to a biometric gate is a future hardening step. Keystore hardware backing depends on the device and is not guaranteed.
+New text/file content keys use HKDF-SHA256(input = 32 fresh OS random bytes, salt = group seed, info = `Enigma/private-message-key/v1` or `Enigma/private-file-key/v1`). Each content key is wrapped separately to the selected recipient and sender using RSA-OAEP. Possession of the shared group seed alone does not decrypt these packets. Either designated private RSA key can open them, including captured old packets if that key is later compromised.
 
-## Ten-year key supply
+## Groups and trust
 
-A ten-year expiry is a local policy checked against the device's clock, not a guarantee of ten years of confidentiality. No finite video has a measurable "ten years worth" of entropy. The app uses system cryptographic randomness and a camera frame digest to make a seed, then derives keys as messages are sent. This provides computational security, not a one-time pad. Clock tampering can bypass expiry in a modified environment.
+The official client allows new recipients only from the selected group's locally verified fingerprint/public-key map, checks sender membership and rejects packets for a different group or recipient. Fingerprint-to-key consistency is checked. Aliases and group renaming are local display data, not authenticated identity claims. Member lists are local; they are not an owner-signed, globally synchronized membership ledger. A member can explicitly trust another public identity locally. Outside messenger contacts are not cryptographically linked to the selected fingerprint.
 
-Seed creation:
+Only the recorded creator can issue an invitation through `Protocol.invite()` and the UI. The signer must match the creator fingerprint; the invitation is encrypted for its recipient. A modified client can redistribute shared group secrets or bypass local membership/expiry rules. Owner-only invitations are an official-client policy against malicious participants. A recipient can always retain or forward plaintext they receive.
 
-- SHA-256 of live YUV camera planes and frame timestamps, at least 60 frames over five seconds.
-- 32 bytes from a newly initialized system `SecureRandom`; the camera is never the sole entropy source.
-- HKDF-SHA256(input = OS random bytes, salt = camera digest, info = UTF-8 `QuietKey/group-seed/v1`), producing 32 bytes.
-- Group identity is a UUID; each group has a separate seed.
+Removing local trust makes this device refuse further use of that identity. It cannot revoke keys held elsewhere, erase old packets, or update other devices' lists. Group-wide revocation requires a fresh group and fresh invitations to remaining members. Local group deletion removes the seed, members and history from the vault; rejoining resets that history. Losing the creator identity requires a new group. There is no owner transfer, key recovery or private-key export.
 
-## Invitation wire format
+## Encoding and invitations
 
-`QKG1:` + unpadded Base64URL of a bounded binary envelope. Integers/longs are big-endian; strings use Java DataOutputStream modified UTF-8 (`writeUTF`), with a two-byte length prefix. Blobs have a four-byte length prefix. Body contains `invite-v1`, group UUID, name, expiry milliseconds, recipient SHA-256 identity fingerprint, creator X.509 public key bytes, and the encrypted 32-byte seed. Envelope contains body and signature blobs. Strict size bounds and end-of-packet checks apply.
+Integers and longs are big-endian. Strings use Java DataOutputStream modified UTF-8 with a two-byte length prefix. Blobs have a four-byte length prefix; bounded parsers reject invalid lengths and trailing data.
 
-Wrapping: RSA 2048 OAEP, SHA-256 primary digest, MGF1 SHA-1, empty label. The MGF1 choice is explicit for Android Keystore compatibility and is not a password hash. Signing: SHA256withRSA (PKCS#1 v1.5). The OAEP ciphertext does not itself bind the fields; the creator's signature covers the entire body. Recipient identity and signer are checked before decrypting. Signatures are verified against an embedded key at invitation time and require in-person fingerprint verification.
+`QKI1:` + unpadded Base64URL(X.509 RSA public key) is a public identity. Its fingerprint is SHA-256 of the encoded key.
 
-Public identity QR: `QKI1:` + Base64URL(X.509 RSA public key). The full SHA-256 fingerprint is shown for physical verification.
+`QKG1:` + Base64URL(envelope) contains body and signature blobs. The body contains `invite-v1`, group UUID, name, expiry milliseconds, recipient fingerprint, creator X.509 key and RSA-wrapped 32-byte seed. The signature authenticates the exact body. Acceptance checks recipient/signature and requires explicit physical creator-fingerprint confirmation.
 
-## Message wire format
+RSA wrapping is RSA-2048 OAEP with SHA-256 primary digest, MGF1 SHA-1 and empty label, explicitly selected for Android Keystore interoperability. Signatures use SHA256withRSA (PKCS#1 v1.5), 256 bytes. MGF1 SHA-1 is not a password hash.
 
-`QKM1:` + Base64URL(envelope). The envelope contains body and RSA signature blobs. The body contains a header blob and a ciphertext blob. Header contains `message-v1`, group UUID, sender fingerprint, 16 random message-ID bytes, and 12 random nonce bytes.
+## New private text: QKD1
 
-AES key: HKDF-SHA256(input = group seed, salt = random message ID, info = SHA-256(header)), first/only 32-byte expansion block. AES-256-GCM uses the random nonce, 128-bit tag, and exact header bytes as AAD. The signature covers the exact body, including header and ciphertext. Public keys are looked up in the group's trusted identity map; plaintext is displayed only after signature and GCM checks and durable replay-log update.
+`QKD1:` + Base64URL(envelope). Envelope = body and signature blobs. Body = header and ciphertext blobs. Header = `direct-v1`, group UUID, sender fingerprint, recipient fingerprint, 16 random message-ID bytes, 12 random nonce bytes, recipient-wrapped content key and sender-wrapped content key.
 
-Maximum plaintext is 16,000 UTF-8 bytes. Replay identifiers are stored per group and not pruned. Clearing app data, deleting/reimporting a group, or rolling back app data resets that defense. Delayed unseen messages are accepted; there is no authenticated timestamp or ordering guarantee. The app has no ratchet, forward secrecy, post-compromise recovery, or traffic-padding protocol. Compromise of a seed exposes captured messages for that group. Seed compromise alone does not forge another member's RSA signature.
+AES-256-GCM uses a 128-bit tag and exact header as AAD. The RSA signature covers the exact body. The receiver verifies trusted keys, signature, group, intended recipient/sender, expiry and replay policy, unwraps its content key and authenticates GCM. A replay identifier is saved durably before plaintext is displayed. Maximum plaintext is 16,000 UTF-8 bytes; empty messages are rejected. IDs have a 100,000-entry per-group history limit. Delayed unseen messages are accepted; there is no authenticated ordering or timestamp.
 
-## Local protection and known limits
+## Legacy shared text: QKM1
 
-- Android Keystore holds separate RSA identity and AES-256 vault-encryption keys, without export APIs.
-- The vault is AES-GCM encrypted with a Keystore-generated nonce and AAD `QuietKey-vault-v1`. Atomic writes include creator identity, group seed, members, and replay log. Writes are synced and the committed ciphertext is verified before success. A missing key or corrupt vault fails closed. The encrypted vault has a 24 MB limit in addition to the per-group replay limit; exceeding capacity fails closed until groups are removed or a new installation is used.
-- No network or microphone permission. Camera frames remain in memory; screenshot protection applies to app and QR scanner windows. It cannot prevent a second camera photographing the screen.
-- Strings, plaintext, and shared seeds exist in application RAM while used. Java cannot guarantee zeroization of every copied buffer/string. A compromised OS or keyboard can observe them. Flags requesting no keyboard learning are advisory.
-- Metadata (group identifier, sender fingerprint, length, and pairing metadata) remains visible in packets. The carrier app knows recipients and timing. The app encrypts pasted text, not attachments, notification text, or the transport's own metadata.
-- There is no key recovery, owner transfer, automatic revocation, contact synchronization, or member removal protocol. Lost creator keys require creating a new group. Removing a member requires a new seed and fresh owner-issued invitations for remaining members; old members can still read old-group ciphertext.
-- A modified device can bypass the official client's ownership and expiry checks. There is no claim of malicious-recipient key containment.
+Existing `QKM1:` packets remain readable, explicitly labeled as legacy group messages. All holders of that group seed can decrypt them. Their header contains `message-v1`, group UUID, sender fingerprint, 16-byte ID and 12-byte nonce. The AES key is HKDF-SHA256(group seed, random ID, SHA-256(header)); header is GCM AAD, and body is RSA-signed. Compromise of a legacy group seed reveals captured QKM1 ciphertext. The updated UI only creates QKD1 text.
 
-## Primary references used
+## Private files: ENF1 / .enigma
 
-- Android cryptography recommendations and explicit OAEP/MGF1 behavior: https://developer.android.com/privacy-and-security/cryptography
-- Android Keystore model: https://developer.android.com/privacy-and-security/keystore
-- Camera2 YUV ImageReader API: https://developer.android.com/reference/android/hardware/camera2/package-summary
-- Android Gradle Plugin 8.7 compatibility: https://developer.android.com/build/releases/agp-8-7-0-release-notes
-- ZXing scanner source/documentation: https://github.com/journeyapps/zxing-android-embedded
-- HKDF test vectors: RFC 5869, test case 1.
+Binary package: four-byte magic `ENF1`, bounded header blob, authenticated chunks, fixed 256-byte RSA signature. Header = `file-v1`, group UUID, sender/recipient fingerprints, 16-byte random ID, 8-byte nonce base and content key wrapped separately to recipient and sender. Metadata is encrypted; original filename/type are not in the clear header.
+
+Chunks use AES-256-GCM with nonce = 8-byte base || 4-byte sequence index. AAD = exact header || 4-byte index || 1-byte kind. Kind 0 is encrypted filename and MIME metadata; kind 1 is nonempty file data in chunks of at most 65,536 bytes; kind 2 is an authenticated empty end marker. The signature covers magic, header and all chunk framing/ciphertext. Strict order, length, total-size, chunk-count, final-marker and trailing-data bounds apply. Maximum source size is 50 MiB. Filenames are stripped of paths/control characters and capped at 120 characters; invalid MIME types become application/octet-stream.
+
+Inspection authenticates all chunks and the complete signature before the UI offers restoration. The app copies incoming ciphertext into private cache; it creates no plaintext cache file. On explicit Save restored file, it saves the opened ID before streaming readable data to the chosen document provider. Failed exports request deletion of the partial destination; a provider may retain its own copies or fail deletion. Providers may upload saved documents if the user selects cloud storage.
+
+Unlike text, encrypted file archives can be explicitly restored multiple times. Previously opened files are marked in the UI and still require full verification and Save. File-open history shares the bounded per-group history with text. It is not a promise to reject duplicate files. External saved readable files and original sources are not encrypted or deleted by Enigma.
+
+## Local protection and remaining limits
+
+- AES-GCM vault AAD is `QuietKey-vault-v1`; it stores seeds, owner identities, trusted keys, aliases, setup state and history. Writes are atomic, synced and verified before success. Missing keys/corruption fail closed. Vault ciphertext limit is 24 MiB; persistence failure prevents plaintext release.
+- Backups and device-transfer backup are disabled. Install compatible updates over the app; clearing storage/uninstalling loses access. Debug/release installs have separate vaults.
+- No Internet or microphone permission. Sharing delegates ciphertext to another app; QR/camera operations remain local. This app does not route Internet traffic or operate a VPN.
+- Screenshot protection covers app/scanner windows. It cannot stop an external camera. Drafts and displayed plaintext clear on backgrounding; keyboard learning/autofill are disabled by request. OS/keyboard compromise can still observe data.
+- Plaintext, keys and strings exist in RAM during use. Some byte arrays are cleared, but Java cannot guarantee zeroization of every copy. Encrypted cache files are cleaned after 24 hours at the next launch. Exported/shared files remain wherever the user/provider saved them.
+- Visible packet metadata includes group ID, sender/recipient fingerprints and approximate length. The carrier app knows delivery contacts/timing. There is no padding or transport-metadata protection.
+- History is not pruned. Group reimport, data rollback or clearing storage resets replay protection. Clock manipulation or a modified client can bypass local expiry.
+
+## Primary references
+
+- [Android cryptography and OAEP behavior](https://developer.android.com/privacy-and-security/cryptography)
+- [Android Keystore](https://developer.android.com/privacy-and-security/keystore)
+- [Android document storage](https://developer.android.com/training/data-storage/shared/documents-files)
+- [Camera2](https://developer.android.com/reference/android/hardware/camera2/package-summary)
+- [HKDF specification and vectors, RFC 5869](https://www.rfc-editor.org/rfc/rfc5869)

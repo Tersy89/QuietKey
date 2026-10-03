@@ -1,14 +1,10 @@
-# QuietKey local setup and phone testing
+# Enigma local setup and phone testing
 
-This guide was added during local development because the supplied archive had no TESTING.md. Source and a test APK are shared privately on GitHub at the owner's request. Keep test results and device logs local; no public publishing or build scans are needed. Local tool downloads, SDK paths, build caches and signing keys are excluded from the repository.
+Source and test APK are shared in the owner's private GitHub repository. Keep device logs, SDK paths, local tools and signing keys local; they are excluded from version control. The original archive had no TESTING.md; this guide was added during development.
 
 ## This PC
 
-The project includes the Gradle 8.9 wrapper with a pinned distribution checksum. A checksum-verified JDK 17 is in `.local-tools/`; `tools/dev.ps1` finds it automatically. Android SDK Platform 35 and Build Tools 34.0.0 are installed in the existing SDK. `local.properties` contains this PC's SDK path and is excluded from version control.
-
-Open the **QuietKey** directory in Android Studio. In Settings → Build, Execution, Deployment → Build Tools → Gradle, choose the JDK 17 under `.local-tools` as the Gradle JDK. The installed Studio runtime is JDK 25, which should not be used to run this project's Gradle 8.9 build.
-
-From PowerShell in the QuietKey directory:
+Open the editable **QuietKey** directory in Android Studio. Gradle 8.9 needs JDK 17: choose the checksum-verified JDK under ignored `.local-tools/` in Settings → Build, Execution, Deployment → Build Tools → Gradle. The installed Studio runtime is JDK 25 and should not run this Gradle build. SDK Platform 35 and Build Tools 34.0.0 are installed; ignored `local.properties` points to this PC's SDK.
 
 ```powershell
 .\tools\dev.ps1 build
@@ -16,76 +12,64 @@ From PowerShell in the QuietKey directory:
 .\tools\dev.ps1 devices
 ```
 
-If PowerShell blocks the helper script, run it for this process only:
+If script execution is blocked, use a process-only invocation:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\dev.ps1 build
 ```
 
-`build` runs JVM tests, builds the app and instrumentation APK, and runs Android lint. It does not run tests on a phone. The first build downloads dependencies; runtime needs no network connection. Debug app ID is `app.quietkey.debug`; it has a separate identity and vault from `app.quietkey`. Keep the local Android debug signing key to install updates over this test build.
+`build` runs JVM tests, APK compilation and lint. `protocol` runs the original dependency-free 21 checks and UTF-8 Java syntax parsing. New direct-message/file tests run in the Gradle JVM suite. On another PC install JDK 17 and Android SDK, set JAVA_HOME/ANDROID_HOME, then run `gradlew.bat testDebugUnitTest assembleDebug lintDebug assembleDebugAndroidTest`.
 
-On another PC, install JDK 17 and the Android SDK, set `JAVA_HOME` and `ANDROID_HOME`, then run `gradlew.bat testDebugUnitTest assembleDebug lintDebug assembleDebugAndroidTest`. Do not copy this PC's `local.properties`.
+## Install on your phone
 
-## Connect your phone
-
-1. Use an Android 8.0 or newer phone and a USB cable that supports data.
-2. In Settings → About phone, tap Build number seven times (some manufacturers place it under Software information).
-3. In Developer options, enable USB debugging. Connect the unlocked phone and accept the USB debugging authorization prompt for this PC.
-4. Run `.\tools\dev.ps1 devices`. The phone must show `device`. For `unauthorized`, unlock it and accept the prompt. For an empty list, try another cable/USB port; Windows may need the manufacturer's USB driver.
-5. Build, then install:
+1. Use Android 8.0+ and a data-capable USB cable. Enable Developer options by tapping Build number seven times, then enable USB debugging.
+2. Connect the unlocked phone and authorize this PC in Android's prompt.
+3. Run `.\tools\dev.ps1 devices`. Its serial must show `device`; unlock/authorize for `unauthorized`, or check the cable/USB driver for an empty list.
+4. Build and run the following with that serial:
 
 ```powershell
-.\tools\dev.ps1 install
+.\tools\dev.ps1 install -Serial YOUR_PHONE_SERIAL
+.\tools\dev.ps1 device-tests -Serial YOUR_PHONE_SERIAL
 ```
 
-With multiple devices, pass `-Serial` using the identifier from `devices`:
+You can instead download root **Enigma.apk** from the private main branch and open it on the phone. It appears as **Enigma (test)**, app ID `app.quietkey.debug`, and updates the former QuietKey test install. Manual installation does not run instrumentation tests.
+
+**Keep your installation and signing key.** Do not uninstall, clear app data or delete Keystore aliases to fix an installation you need. There is no key recovery. Another PC's debug signature may differ: do not uninstall to bypass a signature mismatch.
+
+## Automated Android checks
+
+The helper builds and installs both APKs with `adb install -r`, then runs instrumentation directly. It preserves the user's vault. The two Keystore tests use their own temporary vault/cache contexts and verify non-exportable RSA keys, signature/OAEP interoperability, old/new text, binary files, persisted aliases/setup/history and corrupted-vault rejection. The UI test is skipped on normal phone runs.
+
+**Do not run `connectedDebugAndroidTest` on your phone's retained installation.** Gradle's connected suite uninstalls the target afterward, losing its keys. It is suitable only for a disposable emulator. Direct helper results are printed in the terminal; Gradle emulator results are in `app/build/reports/androidTests/connected/`.
+
+Opt-in disposable emulator UI test (fresh installation, Android 10+, generic SDK model required; it expects the first-run setup screen):
 
 ```powershell
-.\tools\dev.ps1 install -Serial YOUR_DEVICE_SERIAL
-.\tools\dev.ps1 device-tests -Serial YOUR_DEVICE_SERIAL
+.\gradlew.bat connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.enigmaUiTest=true'
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`. You can also transfer it directly by USB and open it on the phone, allowing installation from that file manager when Android asks. Manual installation cannot run the automated instrumentation suite.
+This test names the emulator device, performs real emulated-camera setup, checks tab navigation/background clearing and FLAG_SECURE, and encrypts/saves/reopens/restores a 200,000-byte binary file through Android's actual document picker. Test previews and generated data are exported to the emulator's Download directory for local inspection. It does not alter the app's screenshot flags or run on ordinary phones.
 
-## Automated device checks
+## One-phone checklist
 
-Run these before storing important data in a test installation:
+Use disposable messages and files first.
 
-```powershell
-.\tools\dev.ps1 device-tests
-```
+- Set a device name and complete camera setup. Confirm it waits at least five seconds of live input and 60 frames. Test denial and cancellation paths. Device shows a stable public fingerprint after restart.
+- In Text choose Personal vault and My device. Encrypt Unicode text such as `Hello 👋 ä 中文`; copy/paste the complete QKD1 packet and decrypt. A second opening is rejected, including after restart.
+- Change a character in another encrypted packet; it must fail without plaintext. Display plaintext or write a draft, background the app and return: both clear.
+- Encrypt an image, PDF and arbitrary binary file from Files. Save/share the `.enigma` package and confirm the original remains. Reopen and restore it to a chosen location; compare the bytes/file hash. Restore again and confirm the previously-opened indication. Test empty and 50 MiB boundary files, oversized, truncated and tampered packages.
+- Rename a group and device; restart and check persistence. Manage members shows names and full fingerprints. Remove disposable local groups with confirmation.
+- Check screenshots are blocked in app and scanner, airplane-mode encryption works, and larger font/display settings keep controls reachable. Keyboard should not cover the only route to an action.
 
-The suite verifies actual Android Keystore signing and OAEP interoperability, non-exportable private keys, encrypted vault persistence and replay protection. Reports are under `app/build/reports/androidTests/connected/`. These checks do not verify the physical camera or QR pairing experience. Do not uninstall, clear app storage, delete groups or remove Keystore aliases to troubleshoot an installation whose keys you need; there is no recovery mechanism.
+## Two/three-phone checklist
 
-## One-phone smoke test
+Compare full fingerprints in person. Follow README pairing steps, update every phone to 0.2+, and verify:
 
-Use disposable messages and a group named "Local test".
+1. A owns a group; B joins its recipient-specific invitation. A/B send new private text/files in both directions.
+2. Only A has invitation controls. A invites C; B and C explicitly trust each other's public QR to populate their local maps.
+3. A sends to B. C, despite holding the same group seed, cannot decrypt that text/file. A can open its own sent copy. B cannot decrypt a packet intended only for C.
+4. Unknown senders, nonmember recipients, wrong groups, changed signatures, expired groups and replayed text are rejected. Other local member lists do not automatically change when one device changes an alias or removes trust.
+5. Removing C's local trust stops sending/receiving with C here, but does not invalidate C's retained keys. Create a new group and invite only A/B for actual group replacement.
+6. A 0.1 QKM1 packet remains readable in the retained original group and is labeled legacy shared-group text. New QKD1/.enigma packets require 0.2 on both ends.
 
-- Launch QuietKey; identity preparation finishes without an error.
-- Open Identity. A QR and a full fingerprint appear. Close and reopen the app; the fingerprint stays the same.
-- Create a group, allow camera access, and move the phone. Capture must collect at least 60 frames over at least five seconds of live input. Cancel and deny-permission paths should return safely to the app.
-- Select the group under Messages. Encrypt a Unicode message such as `Hello 👋 ä 中文`. Copy the encrypted `QKM1:` text, paste it back, and decrypt. The plaintext and verified sender appear.
-- Paste that same packet again. The app rejects it as already decrypted. Close and reopen the app; it still rejects that packet.
-- Encrypt another message; change a character in the packet and try decrypting. The app rejects it without displaying plaintext.
-- Write a draft or display decrypted text, then press Home. Returning to the app shows cleared plaintext.
-- Try a screenshot of the app and scanner; Android should block it or hide the protected content.
-- Repeat with airplane mode enabled. Pairing and encryption must work offline.
-- With the keyboard open and larger display/font settings, confirm message controls remain reachable and do not overlap the system bars.
-
-## Two-phone pairing test
-
-Follow README.md's pairing steps using two test installations. Compare **the entire fingerprint in person** before confirming either identity.
-
-1. A creates a group. B shows its Identity QR; A scans it with Invite member via QR.
-2. After matching fingerprints, A shows the invitation; B scans it with Scan invitation QR and verifies A's fingerprint.
-3. A and B exchange encrypted text in both directions and check replay rejection after restarting both apps.
-4. B's group view must show no invite control. An invitation for B must not work on a third device.
-5. Cancel a fingerprint confirmation; no membership change should be saved.
-6. Repeat pairing after backgrounding the scanner or recreating its parent activity; the app must resume correctly or report an interruption safely.
-7. For a third member, each receiver also scans and verifies each other sender's Identity QR using Trust sender's identity QR.
-
-Record the phone model, Android version, test step and exact error for failures. Use nonsensitive test content. Keep any logs local; device logs can contain identifying information.
-
-## Verification limits
-
-Desktop protocol tests do not establish Android Keystore, camera or scanner correctness. An APK build does not establish successful phone testing. Consult VERIFICATION.txt for checks actually completed. This remains an unaudited prototype; SECURITY.md documents its protocol and limitations.
+Physical camera/QR pairing, vendor-specific Keystore behavior, actual update retention on the user's phone and accessibility across font/device sizes remain manual checks. See VERIFICATION.txt for executed evidence.

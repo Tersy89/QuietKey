@@ -31,9 +31,17 @@ try {
             & $quietAdb @quietDeviceArgs install -r $quietApk
         }
         'device-tests' {
-            if ($Serial) { $env:ANDROID_SERIAL = $Serial }
-            else { Remove-Item Env:ANDROID_SERIAL -ErrorAction SilentlyContinue }
-            & .\gradlew.bat connectedDebugAndroidTest --console=plain
+            # Gradle connected tests uninstall the app afterward; install updates and run directly
+            # so a phone's existing identity and vault are preserved.
+            & .\gradlew.bat assembleDebug assembleDebugAndroidTest --console=plain
+            if ($LASTEXITCODE -ne 0) { throw 'Instrumentation APK build failed.' }
+            & $quietAdb @quietDeviceArgs install -r app\build\outputs\apk\debug\app-debug.apk
+            if ($LASTEXITCODE -ne 0) { throw 'App update failed. Do not uninstall to work around a signing-key mismatch.' }
+            & $quietAdb @quietDeviceArgs install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+            if ($LASTEXITCODE -ne 0) { throw 'Test APK installation failed.' }
+            $quietTestOutput = & $quietAdb @quietDeviceArgs shell am instrument -w -r app.quietkey.debug.test/androidx.test.runner.AndroidJUnitRunner
+            $quietTestOutput | Write-Output
+            if ($LASTEXITCODE -ne 0 -or (($quietTestOutput -join "`n") -notmatch 'OK \(\d+ tests?\)')) { throw 'Device checks did not report success.' }
         }
     }
     if ($LASTEXITCODE -ne 0) { throw "QuietKey $Action failed (exit $LASTEXITCODE)." }

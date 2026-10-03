@@ -1,57 +1,56 @@
-# QuietKey — offline Android message encryption
+# Enigma — private text and file encryption
 
-Native Android prototype (Java, Android 8.0/API 26+). No account, server, or network permission. Encrypt text here, send its `QKM1:` packet through any messenger, and paste it here to decrypt.
+Enigma is the next version of QuietKey: an offline Android app with a dark security theme, device setup, trusted groups and encryption for a specific recipient. Android 8.0/API 26 or newer. No account, server, Internet permission or VPN tunnel.
 
-## Download the test APK
+## Download and update
 
-**[Download QuietKey.apk](https://github.com/Tersy89/QuietKey/blob/main/QuietKey.apk)** — the installable app is at the top level of the **main** branch, beside this README. Sign in to your GitHub account, open that file, and click **Download raw** (the download arrow). Open the downloaded APK on an Android 8.0+ phone and allow installation from your browser/file manager when Android asks. The app appears as **QuietKey (test)**.
+**[Download Enigma.apk](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)** — the installable app is at the top of the **main** branch. Sign in, open the file, then choose **Download raw** (the download arrow). Open the APK on your phone and allow installation from that browser/file manager. It appears as **Enigma (test)**.
 
-The same verified APK is also available on the [test build download page](https://github.com/Tersy89/QuietKey/releases/tag/v0.1.0-debug.1) under Assets as **QuietKey-0.1.0-debug.apk**. The `app/` directory contains Android source; the source ZIP archives are not installable apps.
+Install over the existing QuietKey test app to retain its keys and groups. Do not uninstall or clear storage. The app ID, vault format and Keystore aliases are retained. Both participants need version 0.2 or newer for new private messages and `.enigma` files. Old `QKM1:` messages remain readable with their original group; older clients cannot read new `QKD1:` messages.
 
-This test build passes the desktop checks and builds successfully. Real-phone, camera, QR scanner and Android Keystore tests are still pending. See TESTING.md for the checklist.
+The repository and release downloads are private. The source folder `app/` is not an installable app. This is an unaudited prototype; see [SECURITY.md](SECURITY.md) for its actual guarantees and limits.
 
-## Included behavior
+## Set up your device
 
-- Each installation generates a public RSA identity with a non-exportable private key in Android Keystore.
-- Up to 30 independent groups, each with a separate 256-bit shared seed, identity of its creator, and ten-year expiry.
-- The creator captures a live camera stream for at least five seconds and 60 frames. Frames are hashed in memory and mixed with system `SecureRandom` output; no video or audio is recorded. The app shows capture progress rather than a video preview.
-- Only the group creator can generate a group-key invitation, enforced in both the UI and the protocol code. Members can encrypt/decrypt and verify other sender identities.
-- Recipient-specific, signed QR invitations: RSA-OAEP encrypts the shared seed for the recipient's public key. Photographing an invitation does not expose the seed without that device's private key.
-- Authenticated AES-256-GCM messages, HKDF-SHA256 per-message keys, random message IDs and nonces, and RSA signatures verified against locally trusted public keys.
-- Persistent replay detection; received message IDs are saved before plaintext is displayed. The replay log has a 100,000-message limit per group; create a new group at the limit.
-- Android Keystore AES-GCM encrypts group seeds, creator identities, trusted keys, and replay logs in an atomically written local vault. App backups and device-transfer backup are disabled.
-- Screenshot protection, plaintext cleared when backgrounded, keyboard-learning and autofill requests disabled on message fields. Only ciphertext has copy/share buttons.
+1. Name your device and choose **Set up with live camera**.
+2. Allow camera access and move the camera for at least five seconds and 60 frames. The screen shows progress; no recording, audio or video preview is saved.
+3. Android Keystore creates the installation's non-exportable private RSA key using system randomness. Camera frame hashes are mixed with additional system randomness to create a separate **Personal vault** group secret. Fresh text/file content keys mix that secret with fresh system randomness.
+4. **Device** shows your public identity QR and full fingerprint. Only the public key is shared. **My device** lets you encrypt files/text for yourself before pairing.
 
-## Pairing A and B
+Upgrading users can keep existing groups without camera setup and create their personal vault later from Device. There is no private-key export or recovery feature.
 
-1. A: **Groups → Create group with camera**. Give the group a name, grant camera permission, and move the camera for five seconds.
-2. B: **Identity**. Show the public identity QR to A.
-3. A: **Invite member via QR** in the group. Scan B's identity QR and compare the entire fingerprint against B's identity screen in person. Confirm.
-4. A shows the resulting invitation QR; B chooses **Groups → Scan invitation QR**.
-5. B compares the creator's full fingerprint against A's identity screen, then joins.
-6. Both select the group under **Messages**. Encrypt before sharing; paste the complete `QKM1:` packet to decrypt.
+## Pair two devices
 
-The creator repeats this flow for every additional member. For more than two participants, receivers must also use **Trust sender's identity QR** to scan and verify every other sender. That action registers a public key; it does not share the group seed. Group creators can see invitation controls; other members cannot.
+1. A: **Groups → Create a group**; enter its name and complete camera capture.
+2. B: **Device**; show the public identity QR.
+3. A: select the group, choose **Invite a new member**, scan B's QR, and compare the **entire fingerprint** with B's Device screen in person. Add an optional member name and confirm only if it matches.
+4. A shows the invitation QR. B: **Groups → Join with invitation QR**; scan it, compare A's full fingerprint in person, and join.
+5. In **Text** or **Files**, select that group and the specific **Private recipient**. Only locally verified members appear. New ciphertext can be opened by that recipient and the sender's own device.
 
-## Build an APK
+For additional members the owner repeats the invitation flow. Other members use **Trust another member's public QR** to verify one another before exchanging private packets. Member lists and names are local to each device; this is not a centrally synchronized roster. Trusting a QR registers a public key but does not issue a group invitation.
 
-The original source archive did not include an APK, complete Gradle wrapper, or TESTING.md. This development copy now includes the standard Gradle 8.9 wrapper and a testing guide, and a debug APK has been built successfully. Source and APK are shared through a private GitHub repository at the owner's request.
+**Groups** provides selection, renaming, member aliases, full fingerprints, a Write privately action, local trust removal and local group removal. Only the owner can issue invitations through the official client. Local removal does not revoke keys already held by another device; create a fresh group and invite remaining members when revocation is needed.
 
-On a development machine:
+## Encrypt text or files
 
-1. Install JDK 17, Android Studio, Android SDK Platform 35, and SDK Build Tools 34.0.0. The wrapper downloads Gradle 8.9. This PC is already configured for the PowerShell helper described in TESTING.md.
-2. Open this directory in Android Studio. If needed, set `sdk.dir` in an untracked `local.properties` file or set `ANDROID_HOME`.
-3. Use JDK 17 for Gradle (including Android Studio's Gradle JDK setting).
-4. Run `./gradlew testDebugUnitTest assembleDebug lintDebug assembleDebugAndroidTest` (Windows: `gradlew.bat`, or `.\tools\dev.ps1 build`).
-5. The installable debug APK is `app/build/outputs/apk/debug/app-debug.apk`. It appears as **QuietKey (test)** and uses `app.quietkey.debug`, a separate installation and vault from a release build. Install it on two test phones using Android Studio or `adb install -r`.
-6. With a test emulator/device attached, run `./gradlew connectedDebugAndroidTest` to validate real Android Keystore behavior and vault persistence.
+- **Text:** select group and recipient, enter a message, encrypt, then copy/share its `QKD1:` packet through your usual messenger. The receiver pastes it into Text with that group selected. The signature, recipient and authentication are checked, and the replay record is saved before plaintext is shown. Repeated message opening is rejected.
+- **Files:** choose any image, document, video or other file up to 50 MiB. Save/share the opaque `.enigma` package. The original file is left in its location. Names and file types are encrypted inside the package; very long names are shortened to 120 characters.
+- **Restore:** choose the group and open a received `.enigma` file. The app verifies the whole signed package and every encrypted chunk before offering **Save restored file**. That action saves a readable file to your chosen location. Previously opened archives may be restored again explicitly and are marked as previously opened.
 
-Pinned dependencies: Android Gradle Plugin 8.7.3, ZXing Android Embedded 4.3.0, AndroidX Activity 1.9.3, Kotlin BOM 1.8.22 (aligns transitive runtime libraries). Build requires fetching dependencies. Runtime operates offline.
+Enigma controls who can decrypt the package. You choose the delivery contact in the messenger's share screen; it cannot bind an outside app's contact to an Enigma fingerprint. No plaintext copy/share buttons are provided. Drafts and displayed plaintext clear on backgrounding. Saved readable files and the original source remain outside the app's protected vault.
 
-## Verification performed here
+## Build and test locally
 
-`tools/test-protocol.sh` runs a dependency-free JVM protocol self-test and Java syntax parsing. All 21 protocol checks passed: pairing, creator preservation, non-owner invite rejection, creator private-key enforcement, invitation tampering, group independence, identity QR parsing, wrong recipient, Unicode, replay, bidirectional messaging, tampered signatures, wrong group, wrong seed/GCM authentication, unknown sender, expiry, size bounds, truncated/trailing packets, fresh randomness, and the RFC 5869 HKDF vector.
+Use JDK 17, Android SDK Platform 35, Build Tools 34.0.0 and the included checksum-pinned Gradle 8.9 wrapper. Android Gradle Plugin is 8.7.3. On this PC the ignored `.local-tools/` JDK and `local.properties` are already configured.
 
-Local verification on 3 October 2026: all 21 protocol checks, Gradle JVM tests, debug APK and instrumentation APK compilation, and Android lint passed (lint: zero errors, 20 warnings). The debug APK signature verifies; inspection of its merged permissions confirms no Internet or microphone permission and disabled backups. Camera startup now does not count toward the minimum five seconds of live capture; the capture screen also accounts for system bars and display density. The Windows syntax check explicitly uses UTF-8.
+```powershell
+.\tools\dev.ps1 build
+.\tools\dev.ps1 protocol
+.\tools\dev.ps1 devices
+.\tools\dev.ps1 install -Serial YOUR_PHONE_SERIAL
+.\tools\dev.ps1 device-tests -Serial YOUR_PHONE_SERIAL
+```
 
-Phone tests have not run because no device is connected. Camera/scanner operation, actual Keystore interoperability and the expanded instrumentation suite remain unverified on a device. The device test uses its own temporary vault file rather than changing the user's groups, and checks durable replay rejection and tampered-vault rejection. See `TESTING.md` for setup and the phone checklist, `VERIFICATION.txt` for recorded status, and `SECURITY.md` for protocol details and limits.
+Build output: `app/build/outputs/apk/debug/app-debug.apk`. The test app remains `app.quietkey.debug`; production ID remains `app.quietkey`. Keep the local debug signing key for compatible updates. Do not use Gradle's `connectedDebugAndroidTest` on an installation you need to keep: it uninstalls the app afterward. The helper installs updates and runs instrumentation directly to preserve the phone's vault.
+
+See [TESTING.md](TESTING.md) for physical-phone steps and [VERIFICATION.txt](VERIFICATION.txt) for recorded evidence. Desktop protocol, Keystore, camera setup, navigation and real Android file-picker round trips have been checked on a disposable Android 15 emulator. Physical-phone camera/QR pairing remains to be tested.

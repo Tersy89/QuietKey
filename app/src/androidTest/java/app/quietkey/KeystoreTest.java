@@ -41,6 +41,12 @@ public final class KeystoreTest {
             Protocol.Group saved=reloaded.groups.stream().filter(g->g.id.equals(group.id)).findFirst().orElseThrow(AssertionError::new);
             assertArrayEquals(group.seed,saved.seed);assertEquals(group.owner,saved.owner);assertEquals(group.seen,saved.seen);
             assertEquals(vault.publicKey(),reloaded.publicKey());assertNull(vault.privateKey().getEncoded());
+            String direct=DirectProtocol.encrypt(group,Protocol.fingerprint(friend.getPublic()),"Private Android signing",vault.publicKey(),vault.privateKey());
+            assertEquals("Private Android signing",DirectProtocol.decrypt(friendGroup,direct,friend.getPublic(),friend.getPrivate()).text);
+            local.members.put(Protocol.fingerprint(friend.getPublic()),Protocol.b64(friend.getPublic().getEncoded()));
+            remote.members.put(Protocol.fingerprint(vault.publicKey()),Protocol.b64(vault.publicKey().getEncoded()));
+            String remoteDirect=DirectProtocol.encrypt(remote,Protocol.fingerprint(vault.publicKey()),"Android private unwrap",friend.getPublic(),friend.getPrivate());
+            assertEquals("Android private unwrap",DirectProtocol.decrypt(local,remoteDirect,vault.publicKey(),vault.privateKey()).text);
             try { Protocol.decrypt(saved,wire); fail("Replay accepted after vault reload"); }
             catch (SecurityException expected) { assertTrue(expected.getMessage().contains("already")); }
             File stored=new File(directory,"groups.qkv");

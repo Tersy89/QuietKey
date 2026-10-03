@@ -24,19 +24,23 @@ public final class CameraActivity extends Activity {
     private Handler worker;
     private MessageDigest digest;
     private TextView status;
+    private ProgressBar captureProgress;
     private int frames;
     private long started;
     private volatile boolean stopped;
     @Override public void onCreate(Bundle state) {
         super.onCreate(state); getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); view.setPadding(dp(22),dp(12),dp(22),dp(16)); view.setBackgroundColor(0xff101b22);
+        LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); view.setPadding(dp(22),dp(12),dp(22),dp(16)); view.setBackgroundColor(0xff080f1d);
         view.setOnApplyWindowInsetsListener((v,insets) -> {
             v.setPadding(dp(22),insets.getSystemWindowInsetTop()+dp(12),dp(22),insets.getSystemWindowInsetBottom()+dp(16));
             return insets;
         });
-        status = new TextView(this); status.setTextColor(0xffeff5f2); status.setTextSize(24); view.addView(status);
-        TextView tip = new TextView(this); tip.setTextColor(0xffa6e3b8); tip.setTextSize(18); tip.setPadding(0,32,0,32);
-        tip.setText("Move the camera around for five seconds. Live frames are mixed with Android secure randomness. Video is never saved."); view.addView(tip);
+        ImageView icon=new ImageView(this);icon.setImageResource(R.drawable.ic_enigma);icon.setContentDescription("Enigma key setup");view.addView(icon,new LinearLayout.LayoutParams(-1,dp(130)));
+        TextView title=new TextView(this);title.setText("setup".equals(getIntent().getStringExtra("purpose"))?"Set up your personal vault":"Create your group secret");title.setTextColor(0xffedf5ff);title.setTextSize(27);view.addView(title);
+        status = new TextView(this); status.setTextColor(0xffedf5ff); status.setTextSize(20); view.addView(status);
+        captureProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);captureProgress.setMax(100);view.addView(captureProgress,new LinearLayout.LayoutParams(-1,dp(26)));
+        TextView tip = new TextView(this); tip.setTextColor(0xff4be3c1); tip.setTextSize(16); tip.setPadding(0,dp(24),0,dp(24));
+        tip.setText("Move the camera around for at least five seconds. We hash live frames and mix them with secure system randomness to create your vault or group secret. No video or audio is saved. Your separate device private key is protected by Android Keystore."); view.addView(tip);
         Button cancel = new Button(this); cancel.setText("Cancel"); cancel.setOnClickListener(v -> finish()); view.addView(cancel); setContentView(view);
         status.setText("Preparing live camera…");
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.CAMERA},7); else start();
@@ -69,7 +73,8 @@ public final class CameraActivity extends Activity {
                     digest.update(ByteBuffer.allocate(8).putLong(image.getTimestamp()).array());
                     for (Image.Plane plane:image.getPlanes()) digest.update(plane.getBuffer());
                     frames++; long elapsed=SystemClock.elapsedRealtime()-started;
-                    runOnUiThread(() -> status.setText("Collecting live frames\n"+frames+" frames · "+Math.min(5,elapsed/1000)+" / 5 seconds"));
+                    int count=frames;int percent=(int)Math.min(100,Math.min(elapsed*100/5000,count*100/60));
+                    runOnUiThread(() -> {status.setText("Collecting live input\n"+count+" frames · "+Math.min(5,elapsed/1000)+" / 5 seconds");captureProgress.setProgress(percent);});
                     if (elapsed>=5000 && frames>=60) {
                         stopped=true; byte[] hash=digest.digest(); runOnUiThread(() -> { setResult(RESULT_OK,new Intent().putExtra("digest",hash)); finish(); });
                     }

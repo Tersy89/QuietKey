@@ -18,6 +18,9 @@ public final class Vault {
     private final AtomicFile file;
     private final KeyStore ks;
     public final ArrayList<Protocol.Group> groups = new ArrayList<>();
+    public String deviceName="This device", personalGroupId;
+    public boolean setupCompleted;
+    public long setupCapturedAt;
     public Vault(Context context) throws Exception {
         file = new AtomicFile(new File(context.getFilesDir(), "groups.qkv"));
         ks = KeyStore.getInstance("AndroidKeyStore"); ks.load(null);
@@ -52,6 +55,10 @@ public final class Vault {
         JSONObject root;
         try { root = new JSONObject(new String(clear, StandardCharsets.UTF_8)); } finally { Arrays.fill(clear, (byte)0); }
         if (root.getInt("version") != 1) throw new SecurityException("Unsupported vault version");
+        deviceName=root.optString("deviceName","This device");
+        setupCompleted=root.optBoolean("setupCompleted",false);
+        personalGroupId=root.optString("personalGroupId",null);
+        setupCapturedAt=root.optLong("setupCapturedAt",0);
         JSONArray list = root.getJSONArray("groups");
         if (list.length() > 30) throw new SecurityException("Too many groups");
         HashSet<String> ids = new HashSet<>();
@@ -63,6 +70,10 @@ public final class Vault {
             while (keys.hasNext()) { String key = keys.next(); String encoded = members.getString(key);
                 if (!Protocol.fingerprint(Protocol.publicKey(encoded)).equals(key)) throw new SecurityException("Invalid membership"); g.members.put(key, encoded); }
             if (!g.members.containsKey(g.owner)) throw new SecurityException("Missing group owner");
+            JSONObject names=item.optJSONObject("memberNames");
+            if(names!=null) for(String id:g.members.keySet()) {
+                String name=names.optString(id,""); if(!name.isEmpty() && name.length()<=40)g.memberNames.put(id,name);
+            }
             JSONArray seen = item.getJSONArray("seen"); if (seen.length()>100000) throw new SecurityException("Replay log too large");
             for (int j=0;j<seen.length();j++) g.seen.add(seen.getString(j));
             groups.add(g);
@@ -75,8 +86,12 @@ public final class Vault {
             JSONObject item = new JSONObject(); item.put("id",g.id); item.put("name",g.name); item.put("seed",Protocol.b64(g.seed)); item.put("expires",g.expires); item.put("owner",g.owner);
             JSONObject members = new JSONObject(); for (Map.Entry<String,String> m:g.members.entrySet()) members.put(m.getKey(),m.getValue());
             item.put("members",members); item.put("seen",new JSONArray(new ArrayList<>(g.seen))); list.put(item);
+            JSONObject names=new JSONObject(); for(Map.Entry<String,String> m:g.memberNames.entrySet())names.put(m.getKey(),m.getValue());
+            item.put("memberNames",names);
         }
         JSONObject root = new JSONObject(); root.put("version",1); root.put("groups",list);
+        root.put("deviceName",deviceName); root.put("setupCompleted",setupCompleted);
+        root.put("personalGroupId",personalGroupId); root.put("setupCapturedAt",setupCapturedAt);
         byte[] clear = root.toString().getBytes(StandardCharsets.UTF_8);
         if(clear.length + 29 > 24000000) { Arrays.fill(clear,(byte)0); throw new SecurityException("Vault capacity reached. Create a fresh installation or delete old groups after preserving access on another device."); }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE,storageKey());

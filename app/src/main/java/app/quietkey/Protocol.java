@@ -19,10 +19,12 @@ public final class Protocol {
     private static final OAEPParameterSpec OAEP = new OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT);
     public static final int MAX_TEXT_BYTES = 16000;
     public static final class Group {
-        public final String id, name, owner;
+        public final String id, owner;
+        public String name;
         public final byte[] seed;
         public final long expires;
         public final LinkedHashMap<String, String> members = new LinkedHashMap<>();
+        public final LinkedHashMap<String, String> memberNames = new LinkedHashMap<>();
         public final HashSet<String> seen = new HashSet<>();
         public Group(String id, String name, byte[] seed, long expires, String owner) {
             if (seed.length != 32 || name.trim().isEmpty() || name.length() > 60) throw new IllegalArgumentException("Invalid group");
@@ -139,7 +141,7 @@ public final class Protocol {
     public static byte[] aes(int mode, byte[] key, byte[] nonce, byte[] aad, byte[] value) throws Exception {
         Cipher c = Cipher.getInstance("AES/GCM/NoPadding"); c.init(mode, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce)); c.updateAAD(aad); return c.doFinal(value);
     }
-    private static byte[] rsa(int mode, Key key, byte[] value) throws Exception {
+    static byte[] rsa(int mode, Key key, byte[] value) throws Exception {
         Cipher c = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding"); c.init(mode, key, OAEP); return c.doFinal(value);
     }
     private static byte[] signed(byte[] body, PrivateKey key) throws Exception {
