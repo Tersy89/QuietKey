@@ -11,7 +11,8 @@ public final class DirectProtocol {
     private DirectProtocol() {}
     public static final class Opened {
         public final String text,sender,recipient,messageId;
-        Opened(String text,String sender,String recipient,String id) { this.text=text;this.sender=sender;this.recipient=recipient;messageId=id; }
+        public final long createdAt,expiresAt;
+        Opened(String text,String sender,String recipient,String id,long created,long expires) { this.text=text;this.sender=sender;this.recipient=recipient;messageId=id;createdAt=created;expiresAt=expires; }
     }
     static PublicKey recipient(Protocol.Group group,String id) throws Exception {
         String encoded=group.members.get(id);
@@ -26,32 +27,40 @@ public final class DirectProtocol {
         finally{Arrays.fill(random,(byte)0);}
     }
     public static String encrypt(Protocol.Group group,String recipientId,String text,PublicKey sender,PrivateKey privateKey) throws Exception {
+        return encrypt(group,recipientId,text,sender,privateKey,0);
+    }
+    public static String encrypt(Protocol.Group group,String recipientId,String text,PublicKey sender,PrivateKey privateKey,long ttl) throws Exception {
         live(group); String senderId=Protocol.fingerprint(sender); recipient(group,senderId);
+        if(senderId.equals(recipientId))throw new SecurityException("Choose another verified group member as recipient");
         PublicKey recipient=recipient(group,recipientId);
+        long created=System.currentTimeMillis(),expires=Expiry.deadline(created,ttl,group.expires);
         byte[] clear=text.getBytes(StandardCharsets.UTF_8);
         if(clear.length==0 || clear.length>Protocol.MAX_TEXT_BYTES)throw new IllegalArgumentException("Use 1–16000 UTF-8 bytes");
         byte[] key=freshContentKey(group,"message"),id=Protocol.random(16),nonce=Protocol.random(12);
         try {
-            byte[] header=pack(out->{out.writeUTF("direct-v1");out.writeUTF(group.id);out.writeUTF(senderId);out.writeUTF(recipientId);blob(out,id);blob(out,nonce);
+            byte[] header=pack(out->{out.writeUTF("direct-v2");out.writeUTF(group.id);out.writeUTF(senderId);out.writeUTF(recipientId);out.writeLong(created);out.writeLong(expires);blob(out,id);blob(out,nonce);
                 blob(out,Protocol.rsa(Cipher.ENCRYPT_MODE,recipient,key));blob(out,Protocol.rsa(Cipher.ENCRYPT_MODE,sender,key));});
             byte[] cipher=Protocol.aes(Cipher.ENCRYPT_MODE,key,nonce,header,clear);
             byte[] body=pack(out->{blob(out,header);blob(out,cipher);});
             Signature signature=Signature.getInstance("SHA256withRSA");signature.initSign(privateKey);signature.update(body);
-            byte[] sig=signature.sign();return "QKD1:"+Protocol.b64(pack(out->{blob(out,body);blob(out,sig);}));
+            byte[] sig=signature.sign();return "QKD2:"+Protocol.b64(pack(out->{blob(out,body);blob(out,sig);}));
         } finally {Arrays.fill(key,(byte)0);Arrays.fill(clear,(byte)0);}
     }
     public static Opened decrypt(Protocol.Group group,String wire,PublicKey ownKey,PrivateKey privateKey) throws Exception {
         live(group);wire=wire.trim();
-        if(!wire.startsWith("QKD1:") || wire.length()>30000)throw new SecurityException("Invalid private message");
+        boolean v2=wire.startsWith("QKD2:");
+        if((!v2 && !wire.startsWith("QKD1:")) || wire.length()>30000)throw new SecurityException("Invalid private message");
         DataInputStream outer=input(Protocol.un64(wire.substring(5)));byte[] body=blob(outer,18000),sig=blob(outer,256);end(outer);
         DataInputStream in=input(body);byte[] header=blob(in,900),cipher=blob(in,Protocol.MAX_TEXT_BYTES+16);end(in);
         DataInputStream h=input(header);
-        if(!h.readUTF().equals("direct-v1") || !h.readUTF().equals(group.id))throw new SecurityException("Message belongs to a different group");
-        String sender=h.readUTF(),recipient=h.readUTF();byte[] id=blob(h,16),nonce=blob(h,12),forRecipient=blob(h,256),forSender=blob(h,256);end(h);
+        if(!h.readUTF().equals(v2?"direct-v2":"direct-v1") || !h.readUTF().equals(group.id))throw new SecurityException("Message belongs to a different group");
+        String sender=h.readUTF(),recipient=h.readUTF();long created=v2?h.readLong():0,expires=v2?h.readLong():0;
+        byte[] id=blob(h,16),nonce=blob(h,12),forRecipient=blob(h,256),forSender=blob(h,256);end(h);
         if(id.length!=16 || nonce.length!=12 || forRecipient.length!=256 || forSender.length!=256)throw new SecurityException("Invalid private message fields");
         PublicKey trusted=recipient(group,sender);recipient(group,recipient);
         Signature signature=Signature.getInstance("SHA256withRSA");signature.initVerify(trusted);signature.update(body);
         if(!signature.verify(sig))throw new SecurityException("Message signature invalid");
+        Expiry.check(created,expires,group.expires);
         String own=Protocol.fingerprint(ownKey);
         if(!own.equals(recipient) && !own.equals(sender))throw new SecurityException("This message is private to another member");
         String messageId=Protocol.b64(id);
@@ -61,7 +70,7 @@ public final class DirectProtocol {
         try {
             if(key.length!=32)throw new SecurityException("Invalid message key");
             byte[] clear=Protocol.aes(Cipher.DECRYPT_MODE,key,nonce,header,cipher);
-            try {return new Opened(new String(clear,StandardCharsets.UTF_8),sender,recipient,messageId);}
+            try {return new Opened(new String(clear,StandardCharsets.UTF_8),sender,recipient,messageId,created,expires);}
             finally {Arrays.fill(clear,(byte)0);}
         } finally {Arrays.fill(key,(byte)0);}
     }

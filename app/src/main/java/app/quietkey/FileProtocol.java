@@ -15,26 +15,30 @@ public final class FileProtocol {
 
     public static final class Verified implements AutoCloseable {
         public final String name, mime, sender, recipient, messageId;
-        public final long size;
+        public final long size,createdAt,expiresAt;
+        private final long groupExpiry;
         public final boolean previouslyOpened;
         private final File file;
         private final byte[] header, key, nonce;
         private boolean closed;
-        private Verified(File file, Header h, byte[] key, String name, String mime, long size, boolean previouslyOpened) {
+        private Verified(File file, Header h, byte[] key, String name, String mime, long size, boolean previouslyOpened,long groupExpiry) {
             this.file=file; this.header=h.bytes; this.key=key; this.nonce=h.nonce;
             this.name=name; this.mime=mime; this.size=size; sender=h.sender; recipient=h.recipient; messageId=Protocol.b64(h.id);
             this.previouslyOpened=previouslyOpened;
+            createdAt=h.createdAt;expiresAt=h.expiresAt;this.groupExpiry=groupExpiry;
         }
         @Override public void close() { Arrays.fill(key,(byte)0); closed=true; }
     }
     private static final class Header {
         final byte[] bytes, id, nonce, forRecipient, forSender;
         final String group, sender, recipient;
+        final long createdAt,expiresAt;
         Header(byte[] bytes) throws Exception {
             this.bytes=bytes;
             DataInputStream in=new DataInputStream(new ByteArrayInputStream(bytes));
-            if (!in.readUTF().equals("file-v1")) throw new SecurityException("Unsupported encrypted file");
-            group=in.readUTF(); sender=in.readUTF(); recipient=in.readUTF(); id=blob(in,16); nonce=blob(in,8);
+            String version=in.readUTF();boolean v2=version.equals("file-v2");
+            if (!v2 && !version.equals("file-v1")) throw new SecurityException("Unsupported encrypted file");
+            group=in.readUTF(); sender=in.readUTF(); recipient=in.readUTF();createdAt=v2?in.readLong():0;expiresAt=v2?in.readLong():0; id=blob(in,16); nonce=blob(in,8);
             forRecipient=blob(in,256);forSender=blob(in,256);
             if (id.length!=16 || nonce.length!=8 || forRecipient.length!=256 || forSender.length!=256 || in.available()!=0) throw new SecurityException("Invalid file header");
         }
@@ -65,12 +69,17 @@ public final class FileProtocol {
     /** Only ciphertext is written. Output may be partial on failure and must be discarded. */
     public static void encrypt(Protocol.Group group, String recipientId, InputStream source, OutputStream target, String name, String mime,
                                PublicKey sender, PrivateKey privateKey) throws Exception {
+        encrypt(group,recipientId,source,target,name,mime,sender,privateKey,0);
+    }
+    public static void encrypt(Protocol.Group group,String recipientId,InputStream source,OutputStream target,String name,String mime,PublicKey sender,PrivateKey privateKey,long ttl)throws Exception {
         live(group); String fingerprint=Protocol.fingerprint(sender);
         DirectProtocol.recipient(group,fingerprint);
+        if(fingerprint.equals(recipientId))throw new SecurityException("Choose another verified group member as recipient");
         PublicKey recipient=DirectProtocol.recipient(group,recipientId);
+        long created=System.currentTimeMillis(),expires=Expiry.deadline(created,ttl,group.expires);
         byte[] id=Protocol.random(16), nonce=Protocol.random(8), key=DirectProtocol.freshContentKey(group,"file");
         ByteArrayOutputStream headerBytes=new ByteArrayOutputStream(); DataOutputStream h=new DataOutputStream(headerBytes);
-        h.writeUTF("file-v1"); h.writeUTF(group.id); h.writeUTF(fingerprint); h.writeUTF(recipientId); blob(h,id); blob(h,nonce);
+        h.writeUTF("file-v2"); h.writeUTF(group.id); h.writeUTF(fingerprint); h.writeUTF(recipientId);h.writeLong(created);h.writeLong(expires); blob(h,id); blob(h,nonce);
         blob(h,Protocol.rsa(Cipher.ENCRYPT_MODE,recipient,key));blob(h,Protocol.rsa(Cipher.ENCRYPT_MODE,sender,key));
         byte[] header=headerBytes.toByteArray(), buffer=new byte[CHUNK];
         Signature signature=Signature.getInstance("SHA256withRSA"); signature.initSign(privateKey);
@@ -114,6 +123,7 @@ public final class FileProtocol {
         try (DataInputStream raw=new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
             Header header=readHeader(raw);
             if (!header.group.equals(group.id)) throw new SecurityException("File belongs to a different group");
+            Expiry.check(header.createdAt,header.expiresAt,group.expires);
             PublicKey trusted=DirectProtocol.recipient(group,header.sender);
             DirectProtocol.recipient(group,header.recipient);
             String own=Protocol.fingerprint(ownKey);
@@ -149,13 +159,15 @@ public final class FileProtocol {
             }
             byte[] sig=new byte[256]; raw.readFully(sig);
             if (raw.read()!=-1 || !signature.verify(sig)) throw new SecurityException("File signature invalid or file was changed");
-            Verified verified=new Verified(file,header,key,name,mime,total,previouslyOpened); success=true; return verified;
+            Expiry.check(header.createdAt,header.expiresAt,group.expires);
+            Verified verified=new Verified(file,header,key,name,mime,total,previouslyOpened,group.expires); success=true; return verified;
         } finally { if (!success && key!=null) Arrays.fill(key,(byte)0); }
     }
 
     /** Call only after saving Verified.messageId durably; never writes plaintext to app cache. */
     public static void restore(Verified verified, OutputStream target) throws Exception {
         if (verified.closed) throw new IllegalStateException("File verification expired. Choose the file again");
+        Expiry.check(verified.createdAt,verified.expiresAt,verified.groupExpiry);
         try (DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(verified.file)))) {
             Header header=readHeader(in);
             if (!Arrays.equals(header.bytes,verified.header)) throw new SecurityException("File changed after verification");

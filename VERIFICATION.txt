@@ -1,77 +1,81 @@
-Enigma 0.2.0 local verification — 3 October 2026
+Enigma 0.3.0 local verification — 3 October 2026
 
-Source: QuietKey-Android-source-1.zip, continued in editable QuietKey directory.
-Read-only synced sources/ were not changed. Original README.md, SECURITY.md and
-VERIFICATION.txt were read first; the original archive had no TESTING.md.
-Source/APK shared only in the owner's private GitHub repo at their request.
-No signing keys, local tool downloads, emulator previews or device logs uploaded.
+Continued from QuietKey-Android-source-1.zip in editable QuietKey directory.
+Read-only synced sources/ were not changed. README.md, SECURITY.md, TESTING.md
+and VERIFICATION.txt were read before this update. Owner's GitHub repo is private.
+Local tools, keys, emulator previews, fixtures and logs remain ignored/local.
 
-Toolchain:
-- Checksum-verified Temurin JDK 17.0.20.1+1 in ignored .local-tools/.
-- Gradle 8.9 wrapper with pinned distribution SHA-256; AGP 8.7.3.
-- compile/target SDK 35, min SDK 26, Build Tools 34.0.0.
-- Disposable EnigmaTest emulator: Android 15 / API 35, x86_64 Google APIs,
-  emulated back camera, Windows hypervisor, no physical phone connected.
+Toolchain: checksum-verified Temurin JDK 17.0.20.1+1; checksum-pinned Gradle 8.9;
+AGP 8.7.3; SDK/target 35, minimum 26, Build Tools 34.0.0. Disposable EnigmaTest
+Android 15/API35 x86_64 emulator with emulated back camera; no physical phone.
 
-PASS: original 21 dependency-free protocol checks, including legacy QKM1,
-      owner-only pairing checks and RFC 5869 HKDF vector.
-PASS: Gradle testDebugUnitTest: 25 JUnit entries, 0 failures/errors;
-      1 entry runs the original 21 checks, 7 private-text tests and 17 file tests.
-      Total 45 portable checks. Covers recipient/sender access, third-member
-      rejection despite same seed, wrong key/group/sender, expiry/replay,
-      signatures/GCM, binary files, empty/chunk boundary, encrypted metadata,
-      repeated explicit restore, invalid framing/truncation, size limit and
-      filename sanitization.
-PASS: UTF-8 syntax parsing of all 13 Java files.
-PASS: assembleDebug and assembleDebugAndroidTest.
-PASS: lintDebug: 0 errors, 20 warnings (localization, portrait orientation,
-      newer dependency/tool versions and similar nonfatal items).
-PASS: connectedDebugAndroidTest on disposable emulator: 3/3, no skips/failures.
-      - Real Android Keystore OAEP/signing and private text in both directions.
-      - Encrypted vault persistence, durable text replay and corrupt-vault rejection.
-      - Real Keystore private-file unwrap/signing, 150,000-byte exact restoration,
-        persisted aliases/setup state and file-open history.
-      - UI: first-run device naming, live 5-second/60-frame emulated camera,
-        tab/member navigation, background draft clearing and FLAG_SECURE.
-      - Actual Android document picker: choose 200,000-byte binary source,
-        encrypt, Save encrypted file, reopen, verify, Save restored file;
-        restored bytes exactly equal source.
-PASS: Six test-only UI previews inspected locally (setup/home/text/files/groups/
-      device), including dark theme, shield, controls, tabs and scroll reachability.
-PASS: Windows device-tests helper installs app/test APK updates and executes
-      instrumentation directly. Two Keystore tests pass; opt-in UI is skipped.
-      Re-running it after a populated emulator vault keeps the encrypted vault
-      hash unchanged and leaves app installed. Gradle connected tests uninstall
-      their target and are explicitly discouraged for a retained phone install.
-PASS: APK signature v2 verifies; signer matches previous QuietKey 0.1 test APK.
-      Certificate SHA-256:
+PASS: Gradle JVM suite, 34 JUnit entries, 0 failures/errors:
+      - Original 21 legacy/pairing/HKDF checks through one JUnit entry.
+      - 10 private-text tests, including missing/self recipient refusal, signed
+        TTL, expiry, expiry modification failing signature and GCM AAD binding.
+      - 20 file tests, including no bytes written for missing/self recipients,
+        expiry after verification but before restore, authenticated expiry changes,
+        binary/empty/chunk/size bounds, signature/GCM/structure and third-member
+        rejection despite the shared group seed.
+      - 3 deterministic expiry boundary/range/clock/clamping tests.
+      Total: 54 portable checks.
+PASS: Original standalone 21 checks and UTF-8 syntax parsing of 16 Java files.
+PASS: Actual previous 0.2 Java code generated QKD1 and file-v1 packets; current
+      code opens both, restores 200,000 exact binary bytes and reports no TTL.
+PASS: App and instrumentation APK compilation; lint 0 errors / 20 warnings
+      (localization, portrait orientation, newer dependencies and similar items).
+PASS: All three Android test methods on emulator:
+      - Two real Keystore signing/OAEP/text/file/vault integrity/persistence tests.
+      - UI setup uses live emulated camera for 5 seconds/60 frames.
+      - Home text/file sending disabled without a recipient, including after
+        adding a genuine second RSA public identity; explicit selection enables.
+      - Four tabs, composing/attachment child screens and guide navigation.
+      - 5-minute TTL stored in text and file history; QKD2 created.
+      - External text opening persists its ID; a repeated external packet fails,
+        while explicit opening from authenticated local history succeeds.
+      - Android's actual file picker chooses a 200,000-byte source, encrypts,
+        saves .enigma, reopens and restores exact bytes. Source remains unchanged.
+      - Unified text/file encrypted history persists; own archive reimport does
+        not duplicate the prepared entry. Background clears draft/plaintext;
+        app retains FLAG_SECURE.
+      - Empty RESET confirmation and cancellation preserve data.
+PASS: Separate opt-in full-reset flow through the real Device confirmation:
+      typed RESET invokes Android data clearing and terminates instrumentation
+      as expected. Follow-up checks confirm old vault/packages absent and a
+      different RSA device fingerprint. CAMERA runtime permission is revoked;
+      external restored files remain. Only the disposable emulator was reset.
+PASS: Final UI smoke test and default phone helper after a populated 0.3 vault:
+      helper installs updates, passes two Keystore tests, skips opt-in UI,
+      preserves the encrypted vault hash exactly and leaves app installed.
+PASS: Local UI previews inspected for Home, composer, attachments, Groups,
+      Device and combined history. Four tabs, explicit recipient, TTL, app info
+      and file/text entries render in the retained dark security theme.
+PASS: APK Signature Scheme v2; signer is unchanged from 0.1/0.2 test builds.
+      Signing certificate SHA-256:
       2aca54e2570fbbd3caaf35a523c8c21a19d3cf553eaf53937590905d402836b7
-PASS: APK inspected: app.quietkey.debug, versionCode 2, versionName 0.2.0-debug,
-      label Enigma (test), new shield icon, min SDK 26, target SDK 35.
-      Permissions: CAMERA and AndroidX app-specific signature permission only;
-      no Internet, microphone or broad storage permission.
-PASS: Manifest: backups/device-transfer backup disabled; nonexported FileProvider
-      grants access only to encrypted cache packages. Screenshot flags retained.
+PASS: APK app.quietkey.debug, versionCode 3, versionName 0.3.0-debug,
+      label Enigma (test), min26/target35; only CAMERA and AndroidX's
+      app-specific signature permission. No Internet, microphone or broad storage.
+      Existing app IDs/vault aliases retained; backups disabled; FileProvider
+      is nonexported and grants only encrypted cache packages.
 
 Enigma.apk SHA-256:
-09DAC5C5BB20901A663738A3044C8A50CC54583BC12FD0C7B80586FF19F2BF54
+AF57190DCB13B3E55B0B40E3F2AC945CECB16FEC4AF025B702884BFB570C8097
 
-New behavior:
-- Enigma branding and dark shield theme; Home/Text/Files/Groups/Device navigation.
-- First-run device name and camera-derived personal group seed; device RSA key
-  remains Android Keystore generated. No video recording or private-key export.
-- New text and files encrypted to a verified group recipient plus sender.
-  QKD1 uses fresh hybrid content keys; old shared QKM1 remains readable/labeled.
-- Generic files up to 50 MiB, encrypted metadata, authenticated chunks, whole-file
-  signature verification before explicit restored-file export; no plaintext cache.
-- Local group names, member aliases/fingerprints, recipient choices and trust removal.
-  Local removal does not revoke another device's keys; lists are not synchronized.
-- Existing app IDs, key aliases and vault format preserved; optional fields added.
+Limits recorded:
+- TTL uses device clocks and official-client checks, not remote erasure.
+  Saved plaintext/modified clients are outside that policy. Default is No expiry.
+- New QKD2 and file-v2 packages require 0.3 on both devices. Older packets retain
+  their original no-message-TTL behavior. Group expiry remains separate.
+- History retains latest 200 entries and at most 150 MiB of encrypted packages;
+  oldest entries are evicted locally. Versions before 0.3 did not keep history.
+- Reset is irreversible for this installation's keys; outside files are retained.
+- Prepared does not imply delivered; transport/contact choice is in the messenger.
+- Member lists/removal remain local; revocation requires a replacement group.
 
-NOT RUN: Physical-phone camera, permission/cancel paths, QR scanning/two-phone
-         pairing, vendor Keystore checks, 0.1-to-0.2 retention on user's phone,
-         external messenger delivery and large-font/accessibility checks.
-NOT PERFORMED: Independent cryptographic/security audit.
+NOT RUN: physical-phone QR pairing, vendor-specific camera/Keystore behavior,
+         update retention on the user's phone, large-font/accessibility testing.
+NOT PERFORMED: independent security/cryptographic audit.
 
-Install Enigma.apk over the existing test app; never uninstall or clear storage
-for troubleshooting keys you need. TESTING.md has phone steps and manual checks.
+Install Enigma.apk over the existing test app to retain access. Use the Device
+reset only when intentionally deleting its keys/data. See TESTING.md and SECURITY.md.

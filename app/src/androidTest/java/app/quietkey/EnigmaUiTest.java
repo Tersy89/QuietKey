@@ -16,6 +16,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import org.junit.*;
 import org.junit.runner.RunWith;
 import java.io.*;
+import java.security.*;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.Assert.*;
 
@@ -32,6 +34,7 @@ public final class EnigmaUiTest {
         if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){EditText found=editor(group.getChildAt(i));if(found!=null)return found;}}
         return null;
     }
+    private void spinners(View view,List<Spinner> found){if(view instanceof Spinner)found.add((Spinner)view);if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)spinners(((ViewGroup)view).getChildAt(i),found);}
     private void waitFor(ActivityScenario<MainActivity> scenario,String text)throws Exception {
         long until=System.currentTimeMillis()+25000;
         while(System.currentTimeMillis()<until){AtomicBoolean found=new AtomicBoolean();scenario.onActivity(a->found.set(find(a.getWindow().getDecorView(),text)!=null));if(found.get())return;Thread.sleep(200);}
@@ -101,9 +104,9 @@ public final class EnigmaUiTest {
         byte[] original=Protocol.random(200000);
         download(input,"application/octet-stream",new ByteArrayInputStream(original));
         click(scenario,"Choose file to encrypt");chooseDocument(input);waitFor(scenario,"Save encrypted file");
-        click(scenario,"Save encrypted file");saveDocument(encrypted);waitFor(scenario,"File protection");
+        click(scenario,"Save encrypted file");saveDocument(encrypted);waitFor(scenario,"Message attachment");
         click(scenario,"Open .enigma file to decrypt");chooseDocument(encrypted);waitFor(scenario,"Save restored file");
-        click(scenario,"Save restored file");saveDocument(restored);waitFor(scenario,"File protection");Thread.sleep(500);
+        click(scenario,"Save restored file");saveDocument(restored);waitFor(scenario,"Message attachment");Thread.sleep(500);
         assertArrayEquals(original,shell("cat /sdcard/Download/"+restored));
     }
     @Test public void setupCameraAndNavigation()throws Exception {
@@ -114,17 +117,40 @@ public final class EnigmaUiTest {
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)) {
             waitFor(scenario,"Set up your device");preview(scenario,"setup");
             scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText("Emulator test"));
-            click(scenario,"Set up with live camera");waitFor(scenario,"Your data. Your keys.");preview(scenario,"home");
-            click(scenario,"Text");waitFor(scenario,"Private messages");preview(scenario,"text");
+            click(scenario,"Set up with live camera");waitFor(scenario,"Ready when you are.");
+            scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Write a message").isEnabled());assertFalse(find(a.getWindow().getDecorView(),"Send a file or image").isEnabled());});
+            // A genuine second RSA identity is registered only in this disposable emulator vault.
+            Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();Vault paired=new Vault(target);KeyPairGenerator generator=KeyPairGenerator.getInstance("RSA");generator.initialize(2048);KeyPair friend=generator.generateKeyPair();String friendId=Protocol.fingerprint(friend.getPublic());
+            paired.groups.get(0).members.put(friendId,Protocol.b64(friend.getPublic().getEncoded()));paired.groups.get(0).memberNames.put(friendId,"Test recipient");paired.save();scenario.recreate();waitFor(scenario,"Ready when you are.");
+            scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Write a message").isEnabled());List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(1).setSelection(1);});Thread.sleep(200);preview(scenario,"home");
+            click(scenario,"Write a message");waitFor(scenario,"MESSAGE EXPIRY (TTL)");preview(scenario,"compose");
+            scenario.onActivity(a->{List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(2).setSelection(1);editor(a.getWindow().getDecorView()).setText("Unified history test");});Thread.sleep(100);
+            click(scenario,"Encrypt for selected member");waitFor(scenario,"Share encrypted message");
+            Vault withText=new Vault(target);assertEquals(1,withText.history.size());MessageRecord text=withText.history.get(0);assertEquals(300000,text.expiresAt-text.createdAt);assertTrue(text.payload.startsWith("QKD2:"));
+            scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(text.payload));click(scenario,"Decrypt pasted message");waitFor(scenario,"DECRYPTED • SIGNATURE VERIFIED");
+            assertTrue(new Vault(target).groups.get(0).seen.contains(text.id));
+            scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(text.payload));click(scenario,"Decrypt pasted message");assertTrue("External replay must be rejected",systemClick("OK"));assertEquals(1,new Vault(target).history.size());
+            click(scenario,"Messages");click(scenario,"Open message");waitFor(scenario,"DECRYPTED • SIGNATURE VERIFIED");click(scenario,"New text message");
             scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText("Background clear test"));
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
             scenario.onActivity(a->assertEquals("",editor(a.getWindow().getDecorView()).getText().toString()));
-            click(scenario,"Files");waitFor(scenario,"File protection");preview(scenario,"files");
+            click(scenario,"Attach a file or image");waitFor(scenario,"Message attachment");preview(scenario,"files");
             filesThroughSystemPicker(scenario);
             click(scenario,"Groups");waitFor(scenario,"Trusted groups");preview(scenario,"groups");
-            click(scenario,"Manage members (1)");waitFor(scenario,"Personal vault members");
-            click(scenario,"Device");waitFor(scenario,"Device & keys");preview(scenario,"device");
+            click(scenario,"Manage members (2)");waitFor(scenario,"Personal vault members");
+            click(scenario,"Device");waitFor(scenario,"About me & my device");preview(scenario,"device");
+            click(scenario,"How to use Enigma");assertTrue(systemClick("Got it"));
+            click(scenario,"Reset app & delete local data");assertTrue(systemClick("Delete local app data"));assertTrue("Empty reset confirmation must preserve the app",systemClick("Keep my data"));
             Vault persisted=new Vault(InstrumentationRegistry.getInstrumentation().getTargetContext());assertTrue(persisted.setupCompleted);assertEquals("Emulator test",persisted.deviceName);assertTrue(persisted.setupCapturedAt>0);assertNotNull(persisted.personalGroupId);
+            assertEquals(2,persisted.history.size());assertEquals("text",persisted.history.get(0).kind);assertEquals("file",persisted.history.get(1).kind);assertEquals(300000,persisted.history.get(1).expiresAt-persisted.history.get(1).createdAt);
+            click(scenario,"Messages");waitFor(scenario,"ALL MESSAGES · TEXT & FILES");preview(scenario,"history");
+            if("true".equals(InstrumentationRegistry.getArguments().getString("enigmaResetTest"))){
+                Bundle status=new Bundle();status.putString("beforeIdentity",Protocol.fingerprint(persisted.publicKey()));InstrumentationRegistry.getInstrumentation().sendStatus(2,status);
+                click(scenario,"Device");click(scenario,"Reset app & delete local data");Thread.sleep(200);
+                AccessibilityNodeInfo edit=node(InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow(),"",true);assertNotNull(edit);
+                Bundle args=new Bundle();args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"RESET");assertTrue(edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args));
+                assertTrue(systemClick("Delete local app data")); // Android terminates this instrumentation with the app.
+            }
         }
     }
 }

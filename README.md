@@ -1,47 +1,51 @@
-# Enigma — private text and file encryption
+# Enigma — private text and file messages
 
-Enigma is the next version of QuietKey: an offline Android app with a dark security theme, device setup, trusted groups and encryption for a specific recipient. Android 8.0/API 26 or newer. No account, server, Internet permission or VPN tunnel.
+Offline Android encryption for a specific verified group member. Android 8.0/API 26+. No account, Enigma server or Internet permission. The repository remains private.
 
 ## Download and update
 
-**[Download Enigma.apk](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)** — the installable app is at the top of the **main** branch. Sign in, open the file, then choose **Download raw** (the download arrow). Open the APK on your phone and allow installation from that browser/file manager. It appears as **Enigma (test)**.
+**[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Sign in, open the file and click **Download raw**. Install over the existing QuietKey/Enigma test app; do not uninstall or clear storage to update. The app ID, signing identity, vault format and Keystore aliases are retained.
 
-Install over the existing QuietKey test app to retain its keys and groups. Do not uninstall or clear storage. The app ID, vault format and Keystore aliases are retained. Both participants need version 0.2 or newer for new private messages and `.enigma` files. Old `QKM1:` messages remain readable with their original group; older clients cannot read new `QKD1:` messages.
+Both people need **0.3 or newer** for new QKD2 text and file-v2 .enigma packages. Older QKM1/QKD1 text and file-v1 packages still open, with no retroactive TTL. Old versions did not retain a conversation history, so previously shared packets must be imported again to appear here. There is no key recovery. This is an unaudited prototype; see SECURITY.md.
 
-The repository and release downloads are private. The source folder `app/` is not an installable app. This is an unaudited prototype; see [SECURITY.md](SECURITY.md) for its actual guarantees and limits.
+## Four tabs
 
-## Set up your device
+- **Home:** choose a group and explicitly choose another verified recipient, then Write a message or Send a file or image. Quick group buttons change the active group. No automatic recipient or My device fallback.
+- **Messages:** all newly prepared and received text/file entries together, across groups. New text, attachments and received packets are accessible here. Open an entry explicitly to decrypt it. Prepared means encrypted locally; delivery/read receipts are not available from outside messengers.
+- **Groups:** create, join, invite, rename and manage members, aliases, public fingerprints and local trust. Member lists are local, not a synchronized directory.
+- **Device:** device name, setup status, public identity QR, app version/information, How to use Enigma, and Reset app & delete local data.
 
-1. Name your device and choose **Set up with live camera**.
-2. Allow camera access and move the camera for at least five seconds and 60 frames. The screen shows progress; no recording, audio or video preview is saved.
-3. Android Keystore creates the installation's non-exportable private RSA key using system randomness. Camera frame hashes are mixed with additional system randomness to create a separate **Personal vault** group secret. Fresh text/file content keys mix that secret with fresh system randomness.
-4. **Device** shows your public identity QR and full fingerprint. Only the public key is shared. **My device** lets you encrypt files/text for yourself before pairing.
+Messages retains the latest 200 encrypted entries, with up to 150 MiB of encrypted file packages; oldest entries are removed locally as needed. Text packets and metadata are in the Keystore-encrypted vault; file content is stored as recipient/sender-encrypted packages. Plaintext is not stored in conversation history. Original source files and restored files remain in the user's chosen locations.
 
-Upgrading users can keep existing groups without camera setup and create their personal vault later from Device. There is no private-key export or recovery feature.
+## Set up and pair
 
-## Pair two devices
+1. Name your device and complete live camera setup (at least five seconds and 60 frames). Android Keystore generates the private RSA key; camera input contributes to a separate personal/group secret. No video or audio is saved. The initial Personal vault group contains only this device and cannot send until another verified member is added.
+2. A creates a group in Groups. B shows their **Device** public identity QR.
+3. A uses **Invite a new member**, scans B's QR and compares the entire fingerprint with B in person before confirming. A then shows the invitation QR.
+4. B uses **Join with invitation QR** and verifies A's entire fingerprint in person before joining.
+5. Home: select that group and B explicitly. Write text or choose a file. Enigma encrypts it before offering Share/Copy/Save encrypted file. Choose B in your messenger's delivery screen.
 
-1. A: **Groups → Create a group**; enter its name and complete camera capture.
-2. B: **Device**; show the public identity QR.
-3. A: select the group, choose **Invite a new member**, scan B's QR, and compare the **entire fingerprint** with B's Device screen in person. Add an optional member name and confirm only if it matches.
-4. A shows the invitation QR. B: **Groups → Join with invitation QR**; scan it, compare A's full fingerprint in person, and join.
-5. In **Text** or **Files**, select that group and the specific **Private recipient**. Only locally verified members appear. New ciphertext can be opened by that recipient and the sender's own device.
+For more members the owner repeats invitations. Other members explicitly scan/verify each other's public QR before exchanging private packets. Trusting a QR stores a public key but does not issue an invitation. New outgoing text/files reject missing, self or unregistered recipients in the UI and protocol layer. Content uses a fresh AES key; that key is encrypted separately to the recipient's public key and the sender's public key. Another member's shared group seed cannot decrypt it.
 
-For additional members the owner repeats the invitation flow. Other members use **Trust another member's public QR** to verify one another before exchanging private packets. Member lists and names are local to each device; this is not a centrally synchronized roster. Trusting a QR registers a public key but does not issue a group invitation.
+## TTL and receiving
 
-**Groups** provides selection, renaming, member aliases, full fingerprints, a Write privately action, local trust removal and local group removal. Only the owner can issue invitations through the official client. Local removal does not revoke keys already held by another device; create a fresh group and invite remaining members when revocation is needed.
+Before encryption choose **Message expiry (TTL)**: No expiry (default), 5 minutes, 1 hour, 24 hours, 7 days or 30 days. It starts at encryption, is authenticated inside the packet, and is capped by the group's expiry. Enigma checks it when opening text, opening an archive, reopening history and saving a restored file. Group expiry remains a separate ten-year local policy.
 
-## Encrypt text or files
+TTL uses device clocks. It cannot erase plaintext already saved or stop a recipient with a modified client or retained private key. Old packets carry no message TTL. Enigma does not claim remote self-destruction.
 
-- **Text:** select group and recipient, enter a message, encrypt, then copy/share its `QKD1:` packet through your usual messenger. The receiver pastes it into Text with that group selected. The signature, recipient and authentication are checked, and the replay record is saved before plaintext is shown. Repeated message opening is rejected.
-- **Files:** choose any image, document, video or other file up to 50 MiB. Save/share the opaque `.enigma` package. The original file is left in its location. Names and file types are encrypted inside the package; very long names are shortened to 120 characters.
-- **Restore:** choose the group and open a received `.enigma` file. The app verifies the whole signed package and every encrypted chunk before offering **Save restored file**. That action saves a readable file to your chosen location. Previously opened archives may be restored again explicitly and are marked as previously opened.
+Use **Open received text** to paste a complete packet; choose its group and decrypt. External repeated text opening is rejected after the opened ID is saved durably. You can explicitly reopen the authenticated encrypted local history entry without accepting that external replay again.
 
-Enigma controls who can decrypt the package. You choose the delivery contact in the messenger's share screen; it cannot bind an outside app's contact to an Enigma fingerprint. No plaintext copy/share buttons are provided. Drafts and displayed plaintext clear on backgrounding. Saved readable files and the original source remain outside the app's protected vault.
+Use **Receive an encrypted file** to open a .enigma package. Enigma verifies the sender, whole package signature and every chunk before Save restored file. File archives may be explicitly restored again before expiry and are marked previously opened. Files up to 50 MiB are supported; names and MIME types are encrypted, with names capped at 120 characters. Saving a restored file creates readable content outside the protected app vault.
 
-## Build and test locally
+## Reset and membership removal
 
-Use JDK 17, Android SDK Platform 35, Build Tools 34.0.0 and the included checksum-pinned Gradle 8.9 wrapper. Android Gradle Plugin is 8.7.3. On this PC the ignored `.local-tools/` JDK and `local.properties` are already configured.
+**Device → Reset app & delete local data** requires typing **RESET**. Android clears the app's local data, keys, setup, groups, encrypted history/cache, permissions and URI grants; the app stays installed and closes. Launch it again to set up a new identity. Old encrypted content may become unreadable. Downloaded, shared, original and restored files outside the app remain elsewhere. Cancel preserves data.
+
+Local member removal does not revoke keys already on another device. Replace the group and invite remaining members when revocation is needed. Removing a group here also removes its local message/file history; others retain their copies.
+
+## Build and test
+
+JDK 17, SDK Platform 35, Build Tools 34.0.0, included checksum-pinned Gradle 8.9 wrapper and AGP 8.7.3. This PC's tools/SDK paths are configured in ignored local files.
 
 ```powershell
 .\tools\dev.ps1 build
@@ -51,6 +55,6 @@ Use JDK 17, Android SDK Platform 35, Build Tools 34.0.0 and the included checksu
 .\tools\dev.ps1 device-tests -Serial YOUR_PHONE_SERIAL
 ```
 
-Build output: `app/build/outputs/apk/debug/app-debug.apk`. The test app remains `app.quietkey.debug`; production ID remains `app.quietkey`. Keep the local debug signing key for compatible updates. Do not use Gradle's `connectedDebugAndroidTest` on an installation you need to keep: it uninstalls the app afterward. The helper installs updates and runs instrumentation directly to preserve the phone's vault.
+Debug output: app/build/outputs/apk/debug/app-debug.apk, app ID app.quietkey.debug. Keep the same debug signing key for compatible updates. Gradle connected tests uninstall the app afterward; use the preserving device-tests helper on a retained phone installation.
 
-See [TESTING.md](TESTING.md) for physical-phone steps and [VERIFICATION.txt](VERIFICATION.txt) for recorded evidence. Desktop protocol, Keystore, camera setup, navigation and real Android file-picker round trips have been checked on a disposable Android 15 emulator. Physical-phone camera/QR pairing remains to be tested.
+See TESTING.md for phone steps and VERIFICATION.txt for executed evidence. Emulator tests cover camera, mandatory recipient selection, unified history, real system document-picker restoration, TTL, reset and Keystore behavior. Physical-phone QR pairing remains a manual check.

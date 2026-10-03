@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.*;
+import java.nio.ByteBuffer;
 import static org.junit.Assert.*;
 
 public final class FileProtocolTest {
@@ -109,5 +110,23 @@ public final class FileProtocolTest {
     }
     @Test public void unregisteredRecipientCannotBeSelected()throws Exception {
         assertThrows(SecurityException.class,()->FileProtocol.encrypt(group,Protocol.b64(Protocol.random(32)),new ByteArrayInputStream(new byte[]{1}),new ByteArrayOutputStream(),"a","application/octet-stream",a.getPublic(),a.getPrivate()));
+    }
+    @Test public void missingAndSelfRecipientCannotWriteAnyBytes()throws Exception{
+        ByteArrayOutputStream out=new ByteArrayOutputStream();
+        assertThrows(SecurityException.class,()->FileProtocol.encrypt(group,null,new ByteArrayInputStream(new byte[]{1}),out,"a","application/octet-stream",a.getPublic(),a.getPrivate()));
+        assertThrows(SecurityException.class,()->FileProtocol.encrypt(group,group.owner,new ByteArrayInputStream(new byte[]{1}),out,"a","application/octet-stream",a.getPublic(),a.getPrivate()));assertEquals(0,out.size());
+    }
+    @Test public void ttlExpiresBetweenVerificationAndRestore()throws Exception{
+        try(OutputStream out=new FileOutputStream(file)){FileProtocol.encrypt(group,Protocol.fingerprint(b.getPublic()),new ByteArrayInputStream(new byte[]{1}),out,"a","application/octet-stream",a.getPublic(),a.getPrivate(),1000);}
+        try(FileProtocol.Verified verified=FileProtocol.inspect(receiver,file,b.getPublic(),b.getPrivate())){
+            assertEquals(1000,verified.expiresAt-verified.createdAt);Thread.sleep(Math.max(0,verified.expiresAt-System.currentTimeMillis()+5));ByteArrayOutputStream restored=new ByteArrayOutputStream();
+            assertThrows(SecurityException.class,()->FileProtocol.restore(verified,restored));assertEquals(0,restored.size());assertThrows(SecurityException.class,()->FileProtocol.inspect(receiver,file,b.getPublic(),b.getPrivate()));
+        }
+    }
+    @Test public void changedFileExpiryIsAuthenticated()throws Exception{
+        encrypt(new byte[]{1},"a","application/octet-stream");byte[] packet=Files.readAllBytes(file.toPath());DataInputStream in=new DataInputStream(new ByteArrayInputStream(packet));in.readInt();int headerSize=in.readInt();byte[] header=new byte[headerSize];in.readFully(header);
+        DataInputStream h=new DataInputStream(new ByteArrayInputStream(header));for(int i=0;i<4;i++)h.readUTF();long created=h.readLong();int expiryOffset=headerSize-h.available();ByteBuffer.wrap(packet).putLong(8+expiryOffset,created+3600000);
+        Signature signer=Signature.getInstance("SHA256withRSA");signer.initSign(a.getPrivate());signer.update(packet,0,packet.length-256);System.arraycopy(signer.sign(),0,packet,packet.length-256,256);Files.write(file.toPath(),packet);
+        assertThrows(javax.crypto.AEADBadTagException.class,()->FileProtocol.inspect(receiver,file,b.getPublic(),b.getPrivate()));
     }
 }

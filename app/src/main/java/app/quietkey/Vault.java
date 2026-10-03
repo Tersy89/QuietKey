@@ -18,6 +18,7 @@ public final class Vault {
     private final AtomicFile file;
     private final KeyStore ks;
     public final ArrayList<Protocol.Group> groups = new ArrayList<>();
+    public final ArrayList<MessageRecord> history=new ArrayList<>();
     public String deviceName="This device", personalGroupId;
     public boolean setupCompleted;
     public long setupCapturedAt;
@@ -78,6 +79,8 @@ public final class Vault {
             for (int j=0;j<seen.length();j++) g.seen.add(seen.getString(j));
             groups.add(g);
         }
+        JSONArray messages=root.optJSONArray("history");
+        if(messages!=null){if(messages.length()>200)throw new SecurityException("Message history too large");for(int i=0;i<messages.length();i++)history.add(MessageRecord.read(messages.getJSONObject(i)));}
     }
     public synchronized void save() throws Exception {
         if (groups.size()>30) throw new IllegalArgumentException("Maximum 30 groups");
@@ -92,6 +95,7 @@ public final class Vault {
         JSONObject root = new JSONObject(); root.put("version",1); root.put("groups",list);
         root.put("deviceName",deviceName); root.put("setupCompleted",setupCompleted);
         root.put("personalGroupId",personalGroupId); root.put("setupCapturedAt",setupCapturedAt);
+        JSONArray messages=new JSONArray();for(MessageRecord message:history)messages.put(message.json());root.put("history",messages);
         byte[] clear = root.toString().getBytes(StandardCharsets.UTF_8);
         if(clear.length + 29 > 24000000) { Arrays.fill(clear,(byte)0); throw new SecurityException("Vault capacity reached. Create a fresh installation or delete old groups after preserving access on another device."); }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE,storageKey());

@@ -24,6 +24,8 @@ public final class KeystoreTest {
             @Override public File getFilesDir() { return directory; }
         };
         Vault vault=new Vault(context);
+        String beforeIdentity=InstrumentationRegistry.getArguments().getString("beforeIdentity");
+        if(beforeIdentity!=null){assertNotEquals(beforeIdentity,Protocol.fingerprint(vault.publicKey()));assertFalse(new File(target.getFilesDir(),"groups.qkv").exists());assertFalse(new File(target.getFilesDir(),"packages").exists());}
         KeyPairGenerator generator=KeyPairGenerator.getInstance("RSA");generator.initialize(2048);
         KeyPair friend=generator.generateKeyPair();
         Protocol.Group group=Protocol.create("Instrumentation test",Protocol.random(32),vault.publicKey());
