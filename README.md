@@ -4,7 +4,9 @@ Native Android prototype (Java, Android 8.0/API 26+). No account, server, or net
 
 ## Download the test APK
 
-Sign in to the GitHub account with access to this private repository and open the [test build download page](https://github.com/Tersy89/QuietKey/releases/tag/v0.1.0-debug.1). Under Assets, download **QuietKey-0.1.0-debug.apk** (the source archives are not installable apps). Open it on an Android 8.0+ phone and allow installation from your browser/file manager when Android asks. The app appears as **QuietKey (test)**.
+**[Download QuietKey.apk](https://github.com/Tersy89/QuietKey/blob/main/QuietKey.apk)** — the installable app is at the top level of the **main** branch, beside this README. Sign in to your GitHub account, open that file, and click **Download raw** (the download arrow). Open the downloaded APK on an Android 8.0+ phone and allow installation from your browser/file manager when Android asks. The app appears as **QuietKey (test)**.
+
+The same verified APK is also available on the [test build download page](https://github.com/Tersy89/QuietKey/releases/tag/v0.1.0-debug.1) under Assets as **QuietKey-0.1.0-debug.apk**. The `app/` directory contains Android source; the source ZIP archives are not installable apps.
 
 This test build passes the desktop checks and builds successfully. Real-phone, camera, QR scanner and Android Keystore tests are still pending. See TESTING.md for the checklist.
 
