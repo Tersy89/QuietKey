@@ -35,10 +35,10 @@ public final class SecurityReviewTest {
         String forged=DirectProtocol.encrypt(group,Protocol.fingerprint(b.getPublic()),"Forged A",a.getPublic(),c.getPrivate());
         assertThrows(SecurityException.class,()->DirectProtocol.decrypt(group,forged,b.getPublic(),b.getPrivate()));
     }
-    @Test public void current03RecipientCanReadWithoutGroupSecretDocumentsGap()throws Exception{
+    @Test public void new04RecipientRequiresGroupSecret()throws Exception{
         String wire=DirectProtocol.encrypt(group,Protocol.fingerprint(b.getPublic()),"Group layer missing",a.getPublic(),a.getPrivate());
         Protocol.Group missing=new Protocol.Group(group.id,group.name,new byte[32],group.expires,group.owner);missing.members.putAll(group.members);
-        assertEquals("Group layer missing",DirectProtocol.decrypt(missing,wire,b.getPublic(),b.getPrivate()).text);
+        assertThrows(javax.crypto.AEADBadTagException.class,()->DirectProtocol.decrypt(missing,wire,b.getPublic(),b.getPrivate()));
     }
     @Test public void deviceIdentitiesCanBeReusedWithIndependentGroupSecrets()throws Exception{
         Protocol.Group other=Protocol.create("Other",Protocol.random(32),a.getPublic());

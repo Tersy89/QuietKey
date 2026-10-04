@@ -1,6 +1,8 @@
 # Enigma 0.3 security and joining review — 4 October 2026
 
-Source review and focused tests of the current private prototype. This is not an independent audit. No application protocol or APK was changed by this review. The proposed pairing flow remains a product/security decision.
+**Historical 0.3 review.** New 0.4 QKD3/file-v3 formats now require the group secret during decryption; guided joining and password-protected storage are implemented. See SECURITY.md and SYSTEM_DESIGN.md for the current design. Older packet formats retain their original limits.
+
+Source review and focused tests of the 0.3 private prototype. This is not an independent audit. No application protocol or APK was changed by this review. The proposed pairing flow remains a product/security decision.
 
 ## Intended protection
 

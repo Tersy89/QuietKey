@@ -26,6 +26,10 @@ public final class Protocol {
         public final LinkedHashMap<String, String> members = new LinkedHashMap<>();
         public final LinkedHashMap<String, String> memberNames = new LinkedHashMap<>();
         public final HashSet<String> seen = new HashSet<>();
+        public long rosterRevision;
+        public String roster="";
+        public final HashSet<String> blocked=new HashSet<>();
+        public final LinkedHashMap<String,String> memberStatus=new LinkedHashMap<>();
         public Group(String id, String name, byte[] seed, long expires, String owner) {
             if (seed.length != 32 || name.trim().isEmpty() || name.length() > 60) throw new IllegalArgumentException("Invalid group");
             UUID.fromString(id);

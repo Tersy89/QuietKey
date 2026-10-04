@@ -31,6 +31,14 @@ public final class MainActivity extends ComponentActivity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Handler ui=new Handler(Looper.getMainLooper());
     private Vault vault;
+    private PasswordLock passwordLock;
+    private volatile int session;
+    private volatile boolean sessionLocked=true;
+    private boolean handoff;private long handoffUntil;
+    private AlertDialog transientDialog;
+    private QrTransfer qrTransfer;
+    private String restoredGroup;
+    private final BroadcastReceiver screenLock=new BroadcastReceiver(){public void onReceive(Context c,Intent i){lockNow();}};
     private volatile boolean broken;
     private LinearLayout root,body,nav;
     private ScrollView scroll;
@@ -45,46 +53,41 @@ public final class MainActivity extends ComponentActivity {
     private String waitingQr;
     private File encryptedFile;
     private FileProtocol.Verified verifiedFile;
-    private ActivityResultLauncher<Intent> capture,saveFile;
+    private ActivityResultLauncher<Intent> capture,saveFile,joinScanner;
     private ActivityResultLauncher<ScanOptions> scanner;
     private ActivityResultLauncher<String[]> openFile;
     private interface Job<T>{T run()throws Exception;}
     private interface Success<T>{void run(T result)throws Exception;}
 
     @Override public void onCreate(Bundle saved) {
-        super.onCreate(saved);getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        super.onCreate(saved);passwordLock=new PasswordLock(this);registerReceiver(screenLock,new IntentFilter(Intent.ACTION_SCREEN_OFF));getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if(saved!=null) {
             pendingName=saved.getString("pendingName");capturePurpose=saved.getString("capturePurpose");
             scanAction=saved.getString("scanAction");scanGroupId=saved.getString("scanGroupId");
             fileAction=saved.getString("fileAction");fileGroupId=saved.getString("fileGroupId");fileRecipientId=saved.getString("fileRecipientId");
-            page=saved.getString("page","home");
+            page=saved.getString("page","home");restoredGroup=saved.getString("selectedGroupId");
             ttlMillis=saved.getLong("ttlMillis",0);fileTtlMillis=saved.getLong("fileTtlMillis",0);
             recipientId=saved.getString("recipientId");
         }
         capture=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
+            returnedFromHandoff();
             if(result.getResultCode()!=RESULT_OK || result.getData()==null)return;
             byte[] digest=result.getData().getByteArrayExtra("digest");
-            if(vault==null){waitingDigest=digest;return;}captured(digest);
+            returnedFromHandoff();if(vault==null){if(digest!=null)Arrays.fill(digest,(byte)0);error("Unlock and start camera capture again.");return;}captured(digest);
         });
         scanner=registerForActivityResult(new ScanContract(),result->{
+            returnedFromHandoff();
             if(result.getContents()==null)return;
-            if(vault==null){waitingQr=result.getContents();return;}scanned(result.getContents());
+            returnedFromHandoff();if(vault==null){waitingQr=result.getContents();return;}scanned(result.getContents());
         });
+        joinScanner=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null){String packet=result.getData().getStringExtra("packet");if(vault==null){waitingQr=packet;scanAction="join";}else join(packet);}});
         openFile=registerForActivityResult(new ActivityResultContracts.OpenDocument(),uri->{
-            if(uri!=null){if(vault==null)error("Please choose the file again after initialization.");else pickedFile(uri);}
+            returnedFromHandoff();if(uri!=null){if(vault==null)error("Please choose the file again after initialization.");else pickedFile(uri);}
         });
         saveFile=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
-            if(result.getResultCode()==RESULT_OK && result.getData()!=null && result.getData().getData()!=null)exportFile(result.getData().getData());
+            returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null && result.getData().getData()!=null){if(vault==null){try{DocumentsContract.deleteDocument(getContentResolver(),result.getData().getData());}catch(Exception ignored){}error("Unlock and choose the encrypted file again.");}else exportFile(result.getData().getData());}
         });
-        shell();progress.setText("Opening your secure vault…");
-        work(()->{cleanupCache();Vault v=new Vault(this);cleanupHistory(v);return v;},v->{
-            vault=v;ownId=Protocol.fingerprint(v.publicKey());
-            if(!v.groups.isEmpty())selected=v.groups.get(0);
-            if(saved!=null && group(saved.getString("selectedGroupId"))!=null)selected=group(saved.getString("selectedGroupId"));
-            if(!hasRecipient())chooseDefaultRecipient();render();
-            if(waitingDigest!=null){byte[] digest=waitingDigest;waitingDigest=null;captured(digest);}
-            else if(waitingQr!=null){String qr=waitingQr;waitingQr=null;scanned(qr);}
-        });
+        shell();lockScreen();
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);out.putString("pendingName",pendingName);out.putString("capturePurpose",capturePurpose);
@@ -105,7 +108,7 @@ public final class MainActivity extends ComponentActivity {
         nav=new LinearLayout(this);nav.setPadding(0,dp(8),0,0);root.addView(nav);setContentView(root);
     }
     private void render() {
-        if(vault==null || isDestroyed())return;
+        if(isDestroyed())return;if(vault==null){lockScreen();return;}
         body.removeAllViews();message=null;output=null;nav.removeAllViews();recipientActions.clear();
         progress.setText(busy?"Securing your data…":"ON-DEVICE KEYS  /  AUTHENTICATED ENCRYPTION");
         if(!vault.setupCompleted){setup();return;}
@@ -120,15 +123,15 @@ public final class MainActivity extends ComponentActivity {
         scroll.post(()->scroll.scrollTo(0,0));
     }
     private void setup() {
-        badge("YOUR PRIVATE SPACE",false);title("Set up your device");note("Give this device a name, then collect live camera frames to create your personal encryption vault.");
+        badge("YOUR PRIVATE SPACE",false);title("Set up your device");note("Give this device a name, then collect live camera frames to create an independent starter group secret.");
         LinearLayout card=card();card.addView(label("01   DEVICE IDENTITY",11,GREEN));card.addView(label("Private key protected on this device",17,WHITE));
         card.addView(label("Android Keystore creates your device's public/private key pair using secure system randomness. The private key is not exported.",14,MUTED));
-        card.addView(label("02   PERSONAL VAULT",11,GREEN));card.addView(label("Add five seconds of camera input",17,WHITE));
+        card.addView(label("02   GROUP SECRET",11,GREEN));card.addView(label("Add five seconds of camera input",17,WHITE));
         card.addView(label("Live frame hashes are mixed with system randomness to make a separate personal vault secret. No video or audio is saved. Camera input does not replace Android's private-key generator.",14,MUTED));body.addView(card);
         EditText name=editor("Device name, e.g. Chris's phone",false);name.setText(vault.deviceName.equals("This device")?"":vault.deviceName);limit(name,40);body.addView(name);
         body.addView(primary("Set up with live camera",()->{
             String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("Name this device");return;}
-            pendingName=value;capturePurpose="setup";capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","setup"));
+            pendingName=value;capturePurpose="setup";beginHandoff();capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","setup"));
         }));
         if(!vault.groups.isEmpty()){
             note("Your existing identity and "+vault.groups.size()+" group(s) will be kept.");
@@ -144,8 +147,8 @@ public final class MainActivity extends ComponentActivity {
         work(()->{
             try {
                 if(vault.groups.size()>=30)throw new IllegalArgumentException("Maximum 30 groups. Remove an unused group before creating another.");
-                Protocol.Group group=Protocol.create(setup?"Personal vault":name,digest,vault.publicKey());
-                group.memberNames.put(ownId,setup?name:vault.deviceName);vault.groups.add(group);
+                Protocol.Group group=Protocol.create(setup?"Starter group":name,digest,vault.publicKey());
+                group.memberNames.put(ownId,setup?name:vault.deviceName);PairingProtocol.signRoster(group,vault.publicKey(),vault.privateKey());vault.groups.add(group);
                 if(setup){vault.deviceName=name;vault.personalGroupId=group.id;vault.setupCompleted=true;vault.setupCapturedAt=System.currentTimeMillis();}
                 persist();return group;
             }finally{Arrays.fill(digest,(byte)0);}
@@ -163,40 +166,39 @@ public final class MainActivity extends ComponentActivity {
         note("Messages holds your encrypted text and file history. Groups handles pairing and membership. Device holds setup and help.");
     }
     private void identity() {
-        title("About me & my device");note(vault.deviceName+" • your installation identity");
+        title("About me & my device");body.addView(button("Lock Enigma now",this::lockNow));body.addView(button("Change app passphrase",this::changePassword));if(Build.VERSION.SDK_INT>=28)body.addView(button(passwordLock.biometricConfigured()?"Disable biometric unlock":"Enable biometric unlock",()->reauth("Confirm security change",()->{if(passwordLock.biometricConfigured())work(()->{passwordLock.disableBiometric();return true;},ok->render());else biometric(true);})));note(vault.deviceName+" • your installation identity");
         LinearLayout about=card();about.addView(label("ENIGMA "+BuildConfig.VERSION_NAME,13,GREEN));about.addView(label("Private text and files, encrypted on your device. No account or Enigma server. Share encrypted packets using your usual messenger.",14,MUTED));body.addView(about);
         body.addView(button("How to use Enigma",this::guide));
         LinearLayout card=card();card.addView(label("PRIVATE KEY",11,GREEN));card.addView(label("Stored in Android Keystore",18,WHITE));card.addView(label("Your private key stays on this device. Only your public identity is shown below. Enigma never displays or exports the private key.",14,MUTED));
-        card.addView(label("CAMERA SETUP",11,GREEN));card.addView(label(vault.setupCapturedAt>0?"Completed "+DateFormat.getDateInstance().format(new Date(vault.setupCapturedAt)):"Existing identity retained; personal camera vault not created",14,WHITE));body.addView(card);
+        card.addView(label("CAMERA SETUP",11,GREEN));card.addView(label(vault.setupCapturedAt>0?"Completed "+DateFormat.getDateInstance().format(new Date(vault.setupCapturedAt)):"Existing identity retained; starter group not created",14,WHITE));body.addView(card);
         body.addView(button("Rename this device",()->editName("Device name",vault.deviceName,40,value->work(()->{vault.deviceName=value;for(Protocol.Group g:vault.groups)g.memberNames.put(ownId,value);persist();return true;},ok->render()))));
-        if(vault.personalGroupId==null)body.addView(button("Create personal vault with camera",()->{pendingName=vault.deviceName;capturePurpose="setup";capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","setup"));}));
+        if(vault.personalGroupId==null)body.addView(button("Create starter group with camera",()->{pendingName=vault.deviceName;capturePurpose="setup";beginHandoff();capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","setup"));}));
         LinearLayout qr=card();qr.addView(label("PUBLIC IDENTITY QR",11,GREEN));
         try{showInlineQr(qr,Protocol.identity(vault.publicKey()));qr.addView(label("Compare the full fingerprint in person",13,GREEN));qr.addView(label(pretty(ownId),13,WHITE));}catch(Exception e){error(e.getMessage());}body.addView(qr);
-        note("Only share this public identity with someone you are pairing with. Camera input strengthens your separate vault secret; Android generates your device private key. This prototype has not had an independent security audit.");
-        body.addView(button("Reset app & delete local data",this::confirmReset));
+        note("To join a group, use Groups → Join group to show your joining QR. This public identity is available for fingerprint comparison. Camera input contributes to group-secret generation; Android generates your private device key. This prototype has not had an independent security audit.");
+        body.addView(button("Reset app & delete local data",()->reauth("Confirm reset",this::confirmReset)));
     }
     private void groups() {
         title("Trusted groups");note("Keep recipients organized. Each group has its own identity, secret and verified member list.");
-        body.addView(primary("Create a group",this::newGroup));body.addView(button("Join with invitation QR",()->scan("join",null)));
+        body.addView(primary("Create a group",this::newGroup));body.addView(button("Join group",this::startJoining));
         if(vault.groups.isEmpty())note("Create a group or scan its owner's invitation to start.");
         for(Protocol.Group g:vault.groups){
-            LinearLayout card=card();card.addView(label(g.id.equals(vault.personalGroupId)?"PERSONAL VAULT":isOwner(g)?"GROUP OWNER":"GROUP MEMBER",10,GREEN));
-            card.addView(label(g.name,21,WHITE));card.addView(label(g.members.size()+" verified device(s) • "+(g==selected?"selected":"tap to select"),13,MUTED));
+            LinearLayout card=card();card.addView(label(g.id.equals(vault.personalGroupId)?"STARTER GROUP":isOwner(g)?"GROUP OWNER":"GROUP MEMBER",10,GREEN));
+            card.addView(label(g.name,21,WHITE));card.addView(label(g.members.size()+" owner-approved device(s) • "+(g==selected?"selected":"tap to select"),13,MUTED));
             card.addView(button(g==selected?"Manage selected group":"Select & manage",()->{selected=g;chooseDefaultRecipient();render();}));
             if(g==selected){
                 card.addView(label("Expires "+DateFormat.getDateInstance().format(new Date(g.expires)),12,MUTED));
                 card.addView(button("Manage members ("+g.members.size()+")",()->{selected=g;page="members";render();}));
-                if(isOwner(g))card.addView(button("Invite a new member",()->scan("invite",g)));
-                card.addView(button("Trust another member's public QR",()->scan("trust",g)));
+                if(isOwner(g)){card.addView(button("Invite new recipient",()->scan("invite",g)));card.addView(button("Scan joining confirmation",()->scan("receipt",g)));}
                 card.addView(button("Rename this group",()->editName("Group name",g.name,60,value->work(()->{g.name=value;persist();return true;},ok->render()))));
                 card.addView(button("Remove group from this device",()->deleteGroup(g)));
             }body.addView(card);
         }
         note("Use Home for quick sending and Messages for text and files. Removing local trust does not revoke keys held on another device.");
     }
-    private void newGroup() {editName("Create a group","",60,value->{pendingName=value;capturePurpose="group";capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","group"));});}
+    private void newGroup() {editName("Create a group","",60,value->{pendingName=value;capturePurpose="group";beginHandoff();capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","group"));});}
     private void deleteGroup(Protocol.Group g) {
-        new AlertDialog.Builder(this).setTitle("Remove "+g.name+"?").setMessage("This removes its secret, trusted members and replay history from this device. Other members keep their keys. Rejoining resets replay protection.")
+        transientDialog=new AlertDialog.Builder(this).setTitle("Remove "+g.name+"?").setMessage("This removes its secret, trusted members and replay history from this device. Other members keep their keys. Rejoining resets replay protection.")
             .setNegativeButton("Keep group",null).setPositiveButton("Remove",(d,w)->work(()->{vault.groups.remove(g);vault.history.removeIf(r->r.group.equals(g.id));if(g.id.equals(vault.personalGroupId))vault.personalGroupId=null;persist();cleanupHistory(vault);Arrays.fill(g.seed,(byte)0);return true;},ok->{if(selected==g)selected=vault.groups.isEmpty()?null:vault.groups.get(0);closeVerified();encryptedFile=null;chooseDefaultRecipient();render();})).show();
     }
     private boolean isOwner(Protocol.Group g){return ownId!=null && g.owner.equals(ownId);}
@@ -210,32 +212,41 @@ public final class MainActivity extends ComponentActivity {
     private void scan(String action,Protocol.Group g) {
         if("invite".equals(action) && (g==null || !isOwner(g))){error("Only the group creator can invite members.");return;}
         scanAction=action;scanGroupId=g==null?null:g.id;
-        ScanOptions options=new ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setOrientationLocked(true).setCaptureActivity(SecureCaptureActivity.class).setPrompt(action.equals("join")?"Scan the owner's invitation QR":"Scan the member's public identity QR");scanner.launch(options);
+        ScanOptions options=new ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setOrientationLocked(true).setCaptureActivity(SecureCaptureActivity.class).setPrompt(action.equals("join")?"Scan the owner's invitation (all frames if shown)":action.equals("receipt")?"Scan the joining confirmation":"Scan their Join group QR");beginHandoff();scanner.launch(options);
     }
-    private void scanned(String qr){Protocol.Group g=group(scanGroupId);if("join".equals(scanAction))join(qr);else if(g!=null)recipient(qr,g,"invite".equals(scanAction));else error("Pairing interrupted. Start the scan again.");}
-    private void recipient(String qr,Protocol.Group g,boolean invite) {
-        work(()->Protocol.parseIdentity(qr),key->{
-            String fingerprint=Protocol.fingerprint(key);EditText name=editor("Member name (optional)",false);limit(name,40);
-            LinearLayout view=column();view.setPadding(dp(20),dp(12),dp(20),dp(12));view.addView(label("Compare the full fingerprint with their device in person. Confirm only if every character matches.",14,MUTED));view.addView(label(pretty(fingerprint),13,WHITE));view.addView(name);
-            new AlertDialog.Builder(this).setTitle("Verify group member").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Fingerprints match",(d,w)->{
-                String alias=name.getText().toString().trim();work(()->{String packet=invite?Protocol.invite(g,key,vault.publicKey(),vault.privateKey()):null;g.members.put(fingerprint,Protocol.b64(key.getEncoded()));if(!alias.isEmpty())g.memberNames.put(fingerprint,alias);persist();return packet;},packet->{selected=g;recipientId=fingerprint;render();if(packet!=null)qrDialog("Invite to "+g.name,packet,"This invitation is encrypted for that member's device. They scan it with Join with invitation QR.");});
-            }).show();
+    private void startJoining(){
+        work(()->{if(vault.joiningRequest.isEmpty()){vault.joiningRequest=PairingProtocol.request(vault.publicKey(),vault.privateKey(),vault.deviceName);persist();}else try{PairingProtocol.parseRequest(vault.joiningRequest);}catch(Exception e){vault.joiningRequest=PairingProtocol.request(vault.publicKey(),vault.privateKey(),vault.deviceName);persist();}return vault.joiningRequest;},request->{
+            LinearLayout view=column();view.setPadding(dp(16),dp(12),dp(16),dp(12));showInlineQr(view,request);view.addView(label("Show this to the group owner. After they scan it, scan their invitation. Only your device can decrypt it.",14,MUTED));
+            transientDialog=new AlertDialog.Builder(this).setTitle("Join group · show my QR").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Scan owner's invitation",(d,w)->{scanAction="join";scanGroupId=null;beginHandoff();joinScanner.launch(new Intent(this,JoinScanActivity.class));}).show();
         });
     }
-    private void join(String qr) {
-        work(()->Protocol.accept(qr,vault.publicKey(),vault.privateKey()),g->{
-            if(group(g.id)!=null){Arrays.fill(g.seed,(byte)0);error("You already have this group. Trust the other member's public identity QR instead.");return;}
-            new AlertDialog.Builder(this).setTitle("Join "+g.name+"?").setMessage("Verify the owner's full fingerprint in person:\n\n"+pretty(g.owner)+"\n\nOnly join if it matches the owner's device.").setNegativeButton("Cancel",(d,w)->Arrays.fill(g.seed,(byte)0)).setOnCancelListener(d->Arrays.fill(g.seed,(byte)0)).setPositiveButton("Match — join",(d,w)->work(()->{if(vault.groups.size()>=30)throw new IllegalArgumentException("Maximum 30 groups");g.memberNames.put(ownId,vault.deviceName);g.memberNames.put(g.owner,"Group owner");vault.groups.add(g);persist();return g;},joined->{selected=joined;chooseDefaultRecipient();page="groups";render();})).show();
-        });
+    private void scanned(String qr){
+        Protocol.Group g=group(scanGroupId);
+        if("join".equals(scanAction)){try{if(qrTransfer==null)qrTransfer=new QrTransfer();String packet=qrTransfer.add(qr);if(packet==null){transientDialog=new AlertDialog.Builder(this).setTitle("Invitation "+qrTransfer.received()+" / "+qrTransfer.total()+" frames").setMessage("Scan the next different frame shown by the owner.").setNegativeButton("Cancel",(d,w)->qrTransfer=null).setPositiveButton("Scan next frame",(d,w)->scan("join",null)).show();}else{qrTransfer=null;join(packet);}}catch(Exception e){qrTransfer=null;error(e.getMessage());}}
+        else if(g!=null && "receipt".equals(scanAction))work(()->{String member=PairingProtocol.receiptMember(g,qr,vault.pendingInvites);persist();return member;},id->{render();Toast.makeText(this,memberName(g,id)+" joined",Toast.LENGTH_LONG).show();});
+        else if(g!=null && "invite".equals(scanAction))work(()->PairingProtocol.parseRequest(qr),request->{
+            transientDialog=new AlertDialog.Builder(this).setTitle("Invite "+request.name+"?").setMessage("Invite this device to "+g.name+". Scan directly from their Join group screen. Their public fingerprint is available below for verification.\n\n"+pretty(Protocol.fingerprint(request.key))).setNegativeButton("Cancel",null).setPositiveButton("Invite",(d,w)->work(()->{
+                if(vault.pairingUsed.contains(request.id))throw new SecurityException("This joining request was already used. Ask them to start a new request");if(vault.pairingUsed.size()>=10000)throw new SecurityException("Joining history full");
+                String packet=PairingProtocol.invite(g,request,vault.publicKey(),vault.privateKey());String member=Protocol.fingerprint(request.key);g.memberStatus.put(member,"Invited");vault.pairingUsed.add(request.id);vault.pendingInvites.put(request.id,member);persist();return packet;
+            },packet->{selected=g;chooseDefaultRecipient();render();qrDialog("Invitation for "+request.name,packet,"They scan every frame from Join group. Encrypted only for their device; valid for this joining request for up to five minutes.");})).show();
+        });else error("Joining interrupted. Start again from Groups.");
+    }
+    private void join(String qr){
+        work(()->{
+            if(vault.joiningRequest.isEmpty())throw new SecurityException("Tap Join group first to create your request");PairingProtocol.Request request=PairingProtocol.parseRequest(vault.joiningRequest);
+            if(vault.pairingUsed.contains(request.id))throw new SecurityException("Joining invitation already consumed");if(vault.pairingUsed.size()>=10000)throw new SecurityException("Joining history full");Protocol.Group joined=PairingProtocol.accept(qr,vault.joiningRequest,vault.publicKey(),vault.privateKey());
+            if(group(joined.id)!=null){Arrays.fill(joined.seed,(byte)0);throw new SecurityException("This group is already on your device; history was preserved");}if(vault.groups.size()>=30)throw new IllegalArgumentException("Maximum 30 groups");
+            String receipt=PairingProtocol.receipt(joined,request.id,vault.publicKey(),vault.privateKey());vault.groups.add(joined);vault.pairingUsed.add(request.id);vault.joiningRequest="";persist();return new Object[]{joined,receipt};
+        },result->{selected=(Protocol.Group)result[0];chooseDefaultRecipient();page="groups";render();qrDialog("Joined "+selected.name,(String)result[1],"All owner-approved member keys are ready. The owner may scan this optional confirmation; otherwise your first verified message confirms you joined. Pair directly with the known owner.");});
     }
     private void memberList() {
         Protocol.Group g=selected;if(g==null){page="groups";groups();return;}
         title(g.name+" members");body.addView(button("Back to groups",()->{page="groups";render();}));
         for(String id:new ArrayList<>(g.members.keySet())){
-            LinearLayout card=card();card.addView(label(memberName(g,id)+(id.equals(g.owner)?" · owner":""),18,WHITE));card.addView(label(pretty(id),12,MUTED));
+            LinearLayout card=card();card.addView(label(memberName(g,id)+(id.equals(g.owner)?" · owner":" · "+g.memberStatus.getOrDefault(id,"Member")),18,WHITE));card.addView(label(pretty(id),12,MUTED));
             if(!id.equals(ownId)){
                 card.addView(button("Name this member",()->editName("Member name",g.memberNames.getOrDefault(id,""),40,value->work(()->{g.memberNames.put(id,value);persist();return true;},ok->render()))));
-                if(!id.equals(g.owner))card.addView(button("Remove local trust",()->new AlertDialog.Builder(this).setTitle("Remove local trust?").setMessage("This device will stop accepting this member's signatures and offering them as a recipient. Their existing group key is not revoked. Create a new group to replace a shared group secret.").setNegativeButton("Cancel",null).setPositiveButton("Remove",(d,w)->work(()->{g.members.remove(id);g.memberNames.remove(id);persist();return true;},ok->{chooseDefaultRecipient();render();})).show()));
+                if(!id.equals(g.owner))card.addView(button("Remove local trust",()->transientDialog=new AlertDialog.Builder(this).setTitle("Remove local trust?").setMessage("This device will stop accepting this member's signatures and offering them as a recipient. Their existing group key is not revoked. Create a new group to replace a shared group secret.").setNegativeButton("Cancel",null).setPositiveButton("Remove",(d,w)->work(()->{g.members.remove(id);g.memberNames.remove(id);g.blocked.add(id);if(isOwner(g))PairingProtocol.signRoster(g,vault.publicKey(),vault.privateKey());persist();return true;},ok->{chooseDefaultRecipient();render();})).show()));
             }body.addView(card);
         }
     }
@@ -292,8 +303,8 @@ public final class MainActivity extends ComponentActivity {
         OpenedText(String text,MessageRecord record){this.text=text;this.record=record;}
     }
     private OpenedText openText(Protocol.Group g,String wire)throws Exception{
-        if(wire.trim().startsWith("QKD1:") || wire.trim().startsWith("QKD2:")){
-            DirectProtocol.Opened o=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());return new OpenedText(o.text,new MessageRecord(o.messageId,g.id,o.sender,o.recipient,"text",wire.trim(),"Private text",o.createdAt,o.expiresAt,false));
+        if(wire.trim().startsWith("QKD1:") || wire.trim().startsWith("QKD2:") || wire.trim().startsWith("QKD3:")){
+            DirectProtocol.Opened o=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());if(isOwner(g)&&!o.sender.equals(ownId))g.memberStatus.put(o.sender,"Joined");return new OpenedText(o.text,new MessageRecord(o.messageId,g.id,o.sender,o.recipient,"text",wire.trim(),"Private text",o.createdAt,o.expiresAt,false));
         }
         Protocol.Opened o=Protocol.decrypt(g,wire);return new OpenedText("Legacy shared-group text\n\n"+o.text,new MessageRecord(o.messageId,g.id,o.sender,ownId,"text",wire.trim(),"Legacy text",System.currentTimeMillis(),0,false));
     }
@@ -339,7 +350,7 @@ public final class MainActivity extends ComponentActivity {
     }
     private void openHistory(MessageRecord r){Protocol.Group g=group(r.group);if(g==null)return;
         if(r.kind.equals("file"))work(()->FileProtocol.inspect(g,new File(historyDirectory(),r.payload),vault.publicKey(),vault.privateKey()),v->{closeVerified();verifiedFile=v;encryptedFile=new File(historyDirectory(),r.payload);fileGroupId=g.id;fileRecipientId=v.recipient;page="files";render();});
-        else work(()->{Protocol.Group view=new Protocol.Group(g.id,g.name,g.seed,g.expires,g.owner);view.members.putAll(g.members);view.memberNames.putAll(g.memberNames);view.seen.addAll(g.seen);view.seen.remove(r.id);OpenedText opened=openText(view,r.payload);if(!opened.record.id.equals(r.id))throw new SecurityException("History packet mismatch");return opened;},this::showOpenedText);
+        else work(()->{Protocol.Group view=new Protocol.Group(g.id,g.name,g.seed,g.expires,g.owner);view.members.putAll(g.members);view.memberNames.putAll(g.memberNames);view.roster=g.roster;view.rosterRevision=g.rosterRevision;view.blocked.addAll(g.blocked);view.seen.addAll(g.seen);view.seen.remove(r.id);OpenedText opened=openText(view,r.payload);if(!opened.record.id.equals(r.id))throw new SecurityException("History packet mismatch");return opened;},this::showOpenedText);
     }
     private void shareHistory(MessageRecord r){Protocol.Group g=group(r.group);try{
         checkHistoryPacket(r);
@@ -367,7 +378,7 @@ public final class MainActivity extends ComponentActivity {
         if(encryptedFile!=null && encryptedFile.exists() && verifiedFile==null)fileResult(false);
         else if(verifiedFile!=null)fileResult(true);
     }
-    private void pickFile(String action){try{if("encrypt".equals(action))requireRecipient();if(selected==null)throw new SecurityException("Choose a group first");closeVerified();encryptedFile=null;clearResult();fileGroupId=selected.id;fileRecipientId=recipientId;fileTtlMillis=ttlMillis;fileAction=action;openFile.launch(new String[]{"*/*"});}catch(Exception e){error(e.getMessage());}}
+    private void pickFile(String action){try{if("encrypt".equals(action))requireRecipient();if(selected==null)throw new SecurityException("Choose a group first");closeVerified();encryptedFile=null;clearResult();fileGroupId=selected.id;fileRecipientId=recipientId;fileTtlMillis=ttlMillis;fileAction=action;beginHandoff();openFile.launch(new String[]{"*/*"});}catch(Exception e){error(e.getMessage());}}
     private File cacheFile()throws IOException {File directory=new File(getCacheDir(),"encrypted");if(!directory.exists() && !directory.mkdirs())throw new IOException("Could not prepare file storage");return File.createTempFile("enigma-",".enigma",directory);}
     private void cleanupCache(){File directory=new File(getCacheDir(),"encrypted");File[] files=directory.listFiles();if(files!=null)for(File file:files)if(file.lastModified()<System.currentTimeMillis()-86400000L)file.delete();}
     private void pickedFile(Uri uri) {
@@ -400,7 +411,7 @@ public final class MainActivity extends ComponentActivity {
         if(preparedGroup==null){closeVerified();encryptedFile=null;return;}
         output=label(decrypted?verifiedFile.name+"\n"+formatSize(verifiedFile.size)+" • from "+memberName(preparedGroup,verifiedFile.sender)+"\n"+expiryLabel(verifiedFile.expiresAt):"Private .enigma package\nFor "+memberName(preparedGroup,fileRecipientId)+" • "+preparedGroup.name+"\n"+pretty(fileRecipientId)+"\n"+expiryLabel(preparedExpiresAt),16,WHITE);card.addView(output);
         card.addView(primary(decrypted?"Save restored file":"Save encrypted file",()->{
-            fileAction=decrypted?"restore":"save-encrypted";Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(decrypted?verifiedFile.mime:"application/octet-stream").putExtra(Intent.EXTRA_TITLE,decrypted?verifiedFile.name:encryptedFile.getName());saveFile.launch(intent);
+            Runnable save=()->{fileAction=decrypted?"restore":"save-encrypted";Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(decrypted?verifiedFile.mime:"application/octet-stream").putExtra(Intent.EXTRA_TITLE,decrypted?verifiedFile.name:encryptedFile.getName());beginHandoff();saveFile.launch(intent);};if(decrypted)reauth("Unlock to export readable file",save);else save.run();
         }));
         if(!decrypted)card.addView(button("Share encrypted file",()->{try{checkPreparedFile();shareEncryptedFile(encryptedFile,preparedGroup,fileRecipientId);}catch(Exception e){error(e.getMessage());}}));body.addView(card);
     }
@@ -410,14 +421,14 @@ public final class MainActivity extends ComponentActivity {
         ScrollView scroll=new ScrollView(this);LinearLayout steps=column();steps.setPadding(dp(20),dp(10),dp(20),dp(10));scroll.addView(steps);
         String[][] sections={
             {"1. Set up your device","Name this device and complete live camera setup. Android creates your private key in Keystore; camera input contributes to a separate group secret. Device shows your public identity QR and fingerprint."},
-            {"2. Pair in Groups","Create a group. The other person shows their Device public QR. The group owner scans it with Invite a new member, compares every fingerprint character in person, and shows the invitation QR. The other person uses Join with invitation QR and verifies the owner. For other members, scan and verify their public QR before messaging them."},
+            {"2. Pair in Groups","B taps Join group and shows the joining QR. The owner taps Invite new recipient, scans B and confirms. B scans the owner’s encrypted invitation, including all frames if shown. Owner-approved member keys import together. Scan directly from the known owner’s device. Existing members receive signed directory updates with new messages/files. Confirmation is optional; a verified reply confirms joining."},
             {"3. Send from Home","Choose a group, then another verified recipient. There is no automatic recipient. Write a message or send a file. Enigma encrypts to their public key before you share; choose that person in your messenger's delivery screen."},
             {"4. Messages holds text and files","Encrypt text, attach files, paste received encrypted text, or open a received .enigma file. All newly prepared/received items appear together in encrypted local history. Open history explicitly to read; plaintext clears when backgrounded. Prepared means encrypted, not delivered."},
-            {"5. Message expiry (TTL)","Choose No expiry, 5 minutes, 1 hour, 24 hours, 7 days or 30 days before encrypting text or a file. Expiry starts at encryption and is signed into the packet. Enigma refuses later opening/restoring after expiry, using the device clock. A recipient can retain saved plaintext or use a modified app; TTL cannot recall those copies. Older packets have no message TTL. Both people need Enigma 0.3 for new packets."},
+            {"5. Message expiry (TTL)","Choose No expiry, 5 minutes, 1 hour, 24 hours, 7 days or 30 days before encrypting text or a file. Expiry starts at encryption and is signed into the packet. Enigma refuses later opening/restoring after expiry, using the device clock. A recipient can retain saved plaintext or use a modified app; TTL cannot recall those copies. Older packets have no message TTL. Both people need Enigma 0.4 for new packets."},
             {"6. Keys, trust and reset","Keep this installation to retain your keys. Removing local trust does not revoke keys held elsewhere: replace the group when needed. Reset app deletes this installation's keys, groups, encrypted history, setup and cache, and requires pairing again. Files already exported/shared outside the app remain there. Enigma has no recovery, network delivery or independent security audit."}
         };
         for(String[] section:sections){steps.addView(label(section[0],17,GREEN));steps.addView(label(section[1],14,WHITE));}
-        new AlertDialog.Builder(this).setTitle("How to use Enigma").setView(scroll).setPositiveButton("Got it",null).show();
+        transientDialog=new AlertDialog.Builder(this).setTitle("How to use Enigma").setView(scroll).setPositiveButton("Got it",null).show();
     }
     private void confirmReset(){
         if(busy)return;
@@ -429,13 +440,14 @@ public final class MainActivity extends ComponentActivity {
             if(!confirm.getText().toString().equals("RESET")){confirm.setError("Type RESET exactly");return;}
             dialog.dismiss();if(message!=null)message.setText("");clearResult();
             try{ActivityManager manager=(ActivityManager)getSystemService(ACTIVITY_SERVICE);if(manager==null || !manager.clearApplicationUserData())error("Android could not reset the app. Use Settings → Apps → Enigma → Storage → Clear data.");}catch(Exception e){error(e.getMessage());}
-        }));dialog.show();
+        }));transientDialog=dialog;dialog.show();
     }
     private void exportFile(Uri destination) {
         if(encryptedFile==null || ("restore".equals(fileAction) && verifiedFile==null)){error("File workflow interrupted. Choose the encrypted file again.");return;}
         boolean restore="restore".equals(fileAction);File source=encryptedFile;FileProtocol.Verified verified=verifiedFile;Protocol.Group g=group(fileGroupId);
         work(()->{
-            try(OutputStream out=getContentResolver().openOutputStream(destination,"wt")){
+            final int exportSession=session;try(OutputStream raw=getContentResolver().openOutputStream(destination,"wt")){
+                OutputStream out=raw==null?null:new FilterOutputStream(raw){private void check(){if(sessionLocked||session!=exportSession)throw new SecurityException("Export cancelled because Enigma locked");}@Override public void write(byte[] b,int off,int len)throws IOException{check();out.write(b,off,len);}@Override public void write(int value)throws IOException{check();out.write(value);}};
                 if(out==null)throw new IOException("Could not save to that location");
                 if(restore){if(g==null || System.currentTimeMillis()>=g.expires || !g.members.containsKey(verified.sender) || !g.members.containsKey(verified.recipient))throw new SecurityException("Group or trusted member unavailable");g.seen.add(verified.messageId);persist();FileProtocol.restore(verified,out);}
                 else{checkPreparedFile();try(InputStream in=new FileInputStream(source)){copy(in,out,FileProtocol.MAX_FILE_BYTES+100000);}}return true;
@@ -447,19 +459,67 @@ public final class MainActivity extends ComponentActivity {
     private void closeVerified(){if(verifiedFile!=null){verifiedFile.close();verifiedFile=null;}}
     private String formatSize(long bytes){return bytes>=1048576?String.format(Locale.ROOT,"%.1f MB",bytes/1048576.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
     private void clearResult(){if(output!=null && output.getParent() instanceof View)body.removeView((View)output.getParent());output=null;}
-    private void qrDialog(String title,String packet,String caption)throws Exception {LinearLayout view=column();view.setPadding(dp(16),dp(12),dp(16),dp(12));showInlineQr(view,packet);view.addView(label(caption,14,MUTED));new AlertDialog.Builder(this).setTitle(title).setView(view).setPositiveButton("Done",null).show();}
-    private void showInlineQr(LinearLayout parent,String packet)throws Exception {BitMatrix matrix=new MultiFormatWriter().encode(packet,BarcodeFormat.QR_CODE,700,700);int[] pixels=new int[700*700];for(int y=0;y<700;y++)for(int x=0;x<700;x++)pixels[y*700+x]=matrix.get(x,y)?Color.BLACK:Color.WHITE;ImageView image=new ImageView(this);image.setImageBitmap(Bitmap.createBitmap(pixels,700,700,Bitmap.Config.ARGB_8888));image.setContentDescription("Public identity or encrypted invitation QR");image.setAdjustViewBounds(true);parent.addView(image,new LinearLayout.LayoutParams(-1,dp(285)));}
-    private void persist()throws Exception {try{vault.save();}catch(Exception e){broken=true;throw new SecurityException("Could not save securely. Close and reopen the app before continuing.",e);}}
-    private <T> void work(Job<T> job,Success<T> success) {
-        if(busy || broken){if(broken)error("Close and reopen the app to reload its secure vault.");return;}
-        busy=true;setEnabled(root,false);progress.setText("Securing your data…");
-        worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setText("ON-DEVICE KEYS  /  AUTHENTICATED ENCRYPTION");try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed())return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(e instanceof EOFException?"Incomplete encrypted message or file":e.getMessage());});}});
+    private void qrDialog(String title,String packet,String caption)throws Exception {
+        List<String> frames=QrTransfer.frames(packet);LinearLayout view=column();view.setPadding(dp(16),dp(12),dp(16),dp(12));LinearLayout qr=column();view.addView(qr);TextView counter=label("",13,GREEN);view.addView(counter);view.addView(label(caption,14,MUTED));int[] index={0};Runnable show=()->{try{qr.removeAllViews();showInlineQr(qr,frames.get(index[0]));counter.setText("Frame "+(index[0]+1)+" of "+frames.size());}catch(Exception e){error(e.getMessage());}};show.run();
+        if(frames.size()>1){view.addView(button("Previous frame",()->{index[0]=(index[0]+frames.size()-1)%frames.size();show.run();}));view.addView(button("Next frame",()->{index[0]=(index[0]+1)%frames.size();show.run();}));}
+        transientDialog=new AlertDialog.Builder(this).setTitle(title).setView(view).setPositiveButton("Done",null).show();
+        if(frames.size()>1){AlertDialog dialog=transientDialog;Runnable cycle=new Runnable(){public void run(){if(!dialog.isShowing()||sessionLocked)return;index[0]=(index[0]+1)%frames.size();show.run();ui.postDelayed(this,1500);}};dialog.setOnDismissListener(d->ui.removeCallbacks(cycle));ui.postDelayed(cycle,1500);}
     }
-    private void discardResult(Object result){if(result instanceof Object[])for(Object item:(Object[])result)discardResult(item);else if(result instanceof AutoCloseable)try{((AutoCloseable)result).close();}catch(Exception ignored){}else if(result instanceof File)((File)result).delete();}
+    private void showInlineQr(LinearLayout parent,String packet)throws Exception {BitMatrix matrix=new MultiFormatWriter().encode(packet,BarcodeFormat.QR_CODE,700,700);int[] pixels=new int[700*700];for(int y=0;y<700;y++)for(int x=0;x<700;x++)pixels[y*700+x]=matrix.get(x,y)?Color.BLACK:Color.WHITE;ImageView image=new ImageView(this);image.setImageBitmap(Bitmap.createBitmap(pixels,700,700,Bitmap.Config.ARGB_8888));image.setContentDescription("Public identity or encrypted invitation QR");image.setAdjustViewBounds(true);parent.addView(image,new LinearLayout.LayoutParams(-1,dp(285)));}
+    private EditText passwordEditor(String hint){EditText edit=editor(hint,false);edit.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);limit(edit,128);return edit;}
+    private void lockScreen(){
+        if(isDestroyed())return;body.removeAllViews();nav.removeAllViews();recipientActions.clear();output=null;message=null;progress.setText("LOCKED · YOUR LOCAL DATA IS ENCRYPTED");
+        boolean create=!passwordLock.configured();title(create?"Protect Enigma":"Unlock Enigma");note(create?"Choose a passphrase of at least 12 characters. It protects your groups, group secrets and encrypted history. Use several random words. There is no password recovery.":"Enter your app passphrase to unlock groups and history.");
+        EditText password=passwordEditor(create?"New passphrase":"App passphrase");body.addView(password);EditText confirm=create?passwordEditor("Repeat passphrase"):null;if(confirm!=null)body.addView(confirm);
+        body.addView(primary(create?"Protect my app":"Unlock",()->{
+            char[] chars=password.getText().toString().toCharArray();if(create && (chars.length<12 || !password.getText().toString().equals(confirm.getText().toString()))){Arrays.fill(chars,'\0');password.setError("Use 12–128 characters and matching passphrases");return;}
+            long wait=getPreferences(MODE_PRIVATE).getLong("retryAfter",0)-System.currentTimeMillis();if(wait>0){Arrays.fill(chars,'\0');error("Try again in "+((wait+999)/1000)+" seconds");return;}password.setText("");if(confirm!=null)confirm.setText("");
+            unlockWork(()->{byte[] key=null;try{key=create?passwordLock.create(chars):passwordLock.unlock(chars);Vault opened=new Vault(this,key);cleanupCache();cleanupHistory(opened);opened.save();getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();return opened;}catch(Exception e){if(!create){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();}throw new SecurityException(create?"Could not protect the vault. Your existing data was retained.":"Could not unlock. Check your passphrase; damaged data or missing device keys also prevent unlocking.",e);}finally{Arrays.fill(chars,'\0');if(key!=null)Arrays.fill(key,(byte)0);}},this::openedVault);
+        }));
+        if(!create && Build.VERSION.SDK_INT>=28 && passwordLock.biometricConfigured())body.addView(button("Unlock with biometrics",()->biometric(false)));
+        note("Forgotten passphrase? There is no bypass. Android Settings can clear this app's data to start over; that permanently loses local keys and data.");
+    }
+    private void openedVault(Vault opened)throws Exception{
+        if(!foreground){opened.close();lockScreen();return;}vault=opened;sessionLocked=false;ownId=Protocol.fingerprint(opened.publicKey());broken=false;
+        if(!opened.groups.isEmpty())selected=opened.groups.get(0);if(group(restoredGroup)!=null)selected=group(restoredGroup);chooseDefaultRecipient();render();
+        if(waitingQr!=null){String qr=waitingQr;waitingQr=null;scanned(qr);}
+    }
+    private void lockNow(){
+        session++;sessionLocked=true;handoff=false;if(vault==null){if(transientDialog!=null)transientDialog.dismiss();setEnabled(root,true);lockScreen();return;}Vault previous=vault;restoredGroup=selected==null?null:selected.id;vault=null;selected=null;recipientId=null;qrTransfer=null;
+        if(transientDialog!=null)transientDialog.dismiss();transientDialog=null;if(message!=null)message.setText("");clearResult();FileProtocol.Verified old=verifiedFile;verifiedFile=null;encryptedFile=null;
+        worker.execute(()->{if(old!=null)old.close();previous.close();});if(!isDestroyed()){setEnabled(root,true);lockScreen();}
+    }
+    private void beginHandoff(){handoff=true;handoffUntil=SystemClock.elapsedRealtime()+120000;int generation=session;ui.postDelayed(()->{if(handoff && generation==session && SystemClock.elapsedRealtime()>=handoffUntil)lockNow();},120100);}
+    private void returnedFromHandoff(){if(handoff && SystemClock.elapsedRealtime()>handoffUntil)lockNow();handoff=false;}
+    private void reauth(String title,Runnable after){
+        if(vault==null)return;long delay=getPreferences(MODE_PRIVATE).getLong("retryAfter",0)-System.currentTimeMillis();if(delay>0){error("Try again in "+((delay+999)/1000)+" seconds");return;}EditText pass=passwordEditor("App passphrase");int generation=session;
+        transientDialog=new AlertDialog.Builder(this).setTitle(title).setView(pass).setNegativeButton("Cancel",null).setPositiveButton("Unlock",(d,w)->{char[] chars=pass.getText().toString().toCharArray();pass.setText("");work(()->{byte[] key=null;try{key=passwordLock.unlock(chars);getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();return true;}catch(Exception e){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();throw new SecurityException("Incorrect passphrase or unavailable device key");}finally{Arrays.fill(chars,'\0');if(key!=null)Arrays.fill(key,(byte)0);}},ok->{if(generation==session && !sessionLocked)after.run();});}).show();
+    }
+    private void changePassword(){reauth("Confirm current passphrase",()->{
+        LinearLayout view=column();EditText next=passwordEditor("New passphrase"),again=passwordEditor("Repeat new passphrase");view.addView(next);view.addView(again);
+        transientDialog=new AlertDialog.Builder(this).setTitle("Change app passphrase").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Change",(d,w)->{char[] chars=next.getText().toString().toCharArray();boolean same=next.getText().toString().equals(again.getText().toString());next.setText("");again.setText("");if(chars.length<12 || !same){Arrays.fill(chars,'\0');error("Use matching passphrases of 12–128 characters");return;}work(()->{byte[] key=vault.copyMaster();try{passwordLock.replace(chars,key);return true;}finally{Arrays.fill(chars,'\0');Arrays.fill(key,(byte)0);}},ok->{render();Toast.makeText(this,"Passphrase changed; biometric unlock disabled",Toast.LENGTH_LONG).show();});}).show();
+    });}
+    @android.annotation.TargetApi(28) private void biometric(boolean enable){
+        if(Build.VERSION.SDK_INT<28)return;final int generation=session;
+        try{javax.crypto.Cipher cipher=enable?passwordLock.enableBiometricCipher():passwordLock.biometricUnlockCipher();
+            android.hardware.biometrics.BiometricPrompt.Builder builder=new android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(enable?"Enable biometric unlock":"Unlock Enigma").setDescription(enable?"Biometrics will be an alternate way to unlock your encrypted vault. Changes to enrolled biometrics may disable this option.":"Authenticate to unlock your local encrypted vault.").setNegativeButton("Use passphrase",getMainExecutor(),(d,w)->{});if(Build.VERSION.SDK_INT>=30)builder.setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG);android.hardware.biometrics.BiometricPrompt prompt=builder.build();
+            prompt.authenticate(new android.hardware.biometrics.BiometricPrompt.CryptoObject(cipher),new CancellationSignal(),getMainExecutor(),new android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){@Override public void onAuthenticationSucceeded(android.hardware.biometrics.BiometricPrompt.AuthenticationResult result){if(generation!=session)return;runWork(()->{byte[] key=enable?vault.copyMaster():passwordLock.finishBiometricUnlock(result.getCryptoObject().getCipher());try{if(enable){passwordLock.finishBiometricEnable(result.getCryptoObject().getCipher(),key);return null;}return new Vault(MainActivity.this,key);}finally{Arrays.fill(key,(byte)0);}},v->{if(enable){render();Toast.makeText(MainActivity.this,"Biometric unlock enabled",Toast.LENGTH_LONG).show();}else openedVault(v);},!enable);}@Override public void onAuthenticationError(int code,CharSequence reason){if(code!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED && code!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_CANCELED)error(reason.toString());}});
+        }catch(Exception e){error("Biometric unlock is unavailable. Use your app passphrase; enrolled biometrics may have changed.");}
+    }
+    private void persist()throws Exception {if(sessionLocked||vault==null)throw new SecurityException("Enigma locked; action cancelled");try{vault.save();}catch(Exception e){broken=true;throw new SecurityException("Could not save securely. Close and reopen the app before continuing.",e);}}
+    private <T> void work(Job<T> job,Success<T> success){runWork(job,success,false);}
+    private <T> void unlockWork(Job<T> job,Success<T> success){runWork(job,success,true);}
+    private <T> void runWork(Job<T> job,Success<T> success,boolean unlocking) {
+        if(sessionLocked && !unlocking){error("Unlock Enigma first");return;}
+        if(busy || broken){if(broken)error("Close and reopen the app to reload its secure vault.");return;}
+        final int generation=session;busy=true;setEnabled(root,false);progress.setText("Securing your data…");
+        worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()||generation!=session){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setText("ON-DEVICE KEYS  /  AUTHENTICATED ENCRYPTION");try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed()||generation!=session)return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(e instanceof EOFException?"Incomplete encrypted message or file":e.getMessage());});}});
+    }
+    private void discardResult(Object result){if(result instanceof Protocol.Group)Arrays.fill(((Protocol.Group)result).seed,(byte)0);else if(result instanceof Object[])for(Object item:(Object[])result)discardResult(item);else if(result instanceof AutoCloseable)try{((AutoCloseable)result).close();}catch(Exception ignored){}else if(result instanceof File)((File)result).delete();}
     private void setEnabled(View view,boolean enabled){view.setEnabled(enabled);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)setEnabled(group.getChildAt(i),enabled);}}
-    private void error(String text){if(!isDestroyed())new AlertDialog.Builder(this).setTitle("Action could not be completed").setMessage(text==null?"Invalid or unsupported encrypted data":text).setPositiveButton("OK",null).show();}
+    private void error(String text){if(!isDestroyed())transientDialog=new AlertDialog.Builder(this).setTitle("Action could not be completed").setMessage(text==null?"Invalid or unsupported encrypted data":text).setPositiveButton("OK",null).show();}
     private interface NameAction{void run(String value);}
-    private void editName(String title,String initial,int max,NameAction action){EditText name=editor(title,false);name.setText(initial);limit(name,max);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(name).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("Enter a name");return;}dialog.dismiss();action.run(value);}));dialog.show();}
+    private void editName(String title,String initial,int max,NameAction action){EditText name=editor(title,false);name.setText(initial);limit(name,max);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(name).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("Enter a name");return;}dialog.dismiss();action.run(value);}));transientDialog=dialog;dialog.show();}
     private void limit(EditText field,int max){field.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(max)});}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private LinearLayout column(){LinearLayout view=new LinearLayout(this);view.setOrientation(LinearLayout.VERTICAL);return view;}
@@ -479,7 +539,7 @@ public final class MainActivity extends ComponentActivity {
         ShieldView(Context context,boolean ready){super(context);this.ready=ready;setContentDescription(ready?"Encryption ready shield":"Device setup shield");}
         @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);float x=getWidth()/2f,y=getHeight()/2f,r=dp(69);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(LINE);canvas.drawCircle(x,y,r,paint);canvas.drawCircle(x,y,r-dp(9),paint);paint.setStrokeWidth(dp(3));paint.setColor(ready?GREEN:MUTED);canvas.drawArc(x-r,y-r,x+r,y+r,-88,ready?340:210,false,paint);Path path=new Path();path.moveTo(x,y-dp(43));path.lineTo(x+dp(34),y-dp(29));path.lineTo(x+dp(30),y+dp(9));path.quadTo(x+dp(24),y+dp(33),x,y+dp(47));path.quadTo(x-dp(24),y+dp(33),x-dp(30),y+dp(9));path.lineTo(x-dp(34),y-dp(29));path.close();paint.setStyle(Paint.Style.FILL);paint.setColor(0xff12372f);canvas.drawPath(path,paint);paint.setStyle(Paint.Style.STROKE);paint.setColor(GREEN);paint.setStrokeWidth(dp(2));canvas.drawPath(path,paint);canvas.drawArc(x-dp(10),y-dp(20),x+dp(10),y+dp(2),180,180,false,paint);paint.setStyle(Paint.Style.FILL);canvas.drawRoundRect(x-dp(15),y-dp(5),x+dp(15),y+dp(19),dp(4),dp(4),paint);paint.setColor(BG);canvas.drawCircle(x,y+dp(5),dp(3),paint);canvas.drawRect(x-dp(1),y+dp(5),x+dp(1),y+dp(12),paint);}
     }
-    @Override protected void onResume(){super.onResume();foreground=true;}
-    @Override protected void onPause(){foreground=false;super.onPause();if(message!=null)message.setText("");clearResult();}
-    @Override protected void onDestroy(){FileProtocol.Verified pending=verifiedFile;verifiedFile=null;if(pending!=null)worker.execute(pending::close);worker.shutdown();super.onDestroy();}
+    @Override protected void onResume(){super.onResume();foreground=true;if(handoff && (SystemClock.elapsedRealtime()>handoffUntil || ((android.app.KeyguardManager)getSystemService(KEYGUARD_SERVICE)).isKeyguardLocked()))lockNow();if(vault==null)lockScreen();}
+    @Override protected void onPause(){foreground=false;super.onPause();if(message!=null)message.setText("");clearResult();if(!handoff)lockNow();}
+    @Override protected void onDestroy(){unregisterReceiver(screenLock);Vault previous=vault;vault=null;if(previous!=null)worker.execute(previous::close);FileProtocol.Verified pending=verifiedFile;verifiedFile=null;if(pending!=null)worker.execute(pending::close);worker.shutdown();super.onDestroy();}
 }

@@ -33,13 +33,14 @@ public final class FileProtocol {
         final byte[] bytes, id, nonce, forRecipient, forSender;
         final String group, sender, recipient;
         final long createdAt,expiresAt;
+        final boolean layered;final byte[] roster;
         Header(byte[] bytes) throws Exception {
             this.bytes=bytes;
             DataInputStream in=new DataInputStream(new ByteArrayInputStream(bytes));
-            String version=in.readUTF();boolean v2=version.equals("file-v2");
+            String version=in.readUTF();layered=version.equals("file-v3");boolean v2=layered || version.equals("file-v2");
             if (!v2 && !version.equals("file-v1")) throw new SecurityException("Unsupported encrypted file");
             group=in.readUTF(); sender=in.readUTF(); recipient=in.readUTF();createdAt=v2?in.readLong():0;expiresAt=v2?in.readLong():0; id=blob(in,16); nonce=blob(in,8);
-            forRecipient=blob(in,256);forSender=blob(in,256);
+            forRecipient=blob(in,256);forSender=blob(in,256);roster=layered?blob(in,17000):new byte[0];
             if (id.length!=16 || nonce.length!=8 || forRecipient.length!=256 || forSender.length!=256 || in.available()!=0) throw new SecurityException("Invalid file header");
         }
     }
@@ -77,11 +78,11 @@ public final class FileProtocol {
         if(fingerprint.equals(recipientId))throw new SecurityException("Choose another verified group member as recipient");
         PublicKey recipient=DirectProtocol.recipient(group,recipientId);
         long created=System.currentTimeMillis(),expires=Expiry.deadline(created,ttl,group.expires);
-        byte[] id=Protocol.random(16), nonce=Protocol.random(8), key=DirectProtocol.freshContentKey(group,"file");
+        byte[] id=Protocol.random(16), nonce=Protocol.random(8), secret=Protocol.random(32);
         ByteArrayOutputStream headerBytes=new ByteArrayOutputStream(); DataOutputStream h=new DataOutputStream(headerBytes);
-        h.writeUTF("file-v2"); h.writeUTF(group.id); h.writeUTF(fingerprint); h.writeUTF(recipientId);h.writeLong(created);h.writeLong(expires); blob(h,id); blob(h,nonce);
-        blob(h,Protocol.rsa(Cipher.ENCRYPT_MODE,recipient,key));blob(h,Protocol.rsa(Cipher.ENCRYPT_MODE,sender,key));
-        byte[] header=headerBytes.toByteArray(), buffer=new byte[CHUNK];
+        h.writeUTF("file-v3"); h.writeUTF(group.id); h.writeUTF(fingerprint); h.writeUTF(recipientId);h.writeLong(created);h.writeLong(expires); blob(h,id); blob(h,nonce);
+        blob(h,Protocol.rsa(Cipher.ENCRYPT_MODE,recipient,secret));blob(h,Protocol.rsa(Cipher.ENCRYPT_MODE,sender,secret));blob(h,PairingProtocol.carrier(group));
+        byte[] header=headerBytes.toByteArray(), buffer=new byte[CHUNK],key=GroupKey.derive(group,secret,"file",header);Arrays.fill(secret,(byte)0);
         Signature signature=Signature.getInstance("SHA256withRSA"); signature.initSign(privateKey);
         DataOutputStream out=new DataOutputStream(new FilterOutputStream(target) {
             @Override public void write(int value) throws IOException { out.write(value); try { signature.update((byte)value); } catch(SignatureException e) { throw new IOException(e); } }
@@ -112,7 +113,7 @@ public final class FileProtocol {
     }
     private static Header readHeader(DataInputStream in) throws Exception {
         if (in.readInt()!=MAGIC) throw new SecurityException("Choose an Enigma .enigma encrypted file");
-        return new Header(blob(in,900));
+        return new Header(blob(in,20000));
     }
 
     /** Verifies the entire signature, every GCM tag, limits and final marker before any export. */
@@ -124,8 +125,9 @@ public final class FileProtocol {
             Header header=readHeader(raw);
             if (!header.group.equals(group.id)) throw new SecurityException("File belongs to a different group");
             Expiry.check(header.createdAt,header.expiresAt,group.expires);
-            PublicKey trusted=DirectProtocol.recipient(group,header.sender);
-            DirectProtocol.recipient(group,header.recipient);
+            Protocol.Group candidate=PairingProtocol.carrierView(group,header.roster);
+            PublicKey trusted=DirectProtocol.recipient(candidate,header.sender);
+            DirectProtocol.recipient(candidate,header.recipient);
             String own=Protocol.fingerprint(ownKey);
             if(!own.equals(header.recipient) && !own.equals(header.sender))throw new SecurityException("This file is private to another member");
             boolean previouslyOpened=group.seen.contains(Protocol.b64(header.id));
@@ -137,7 +139,7 @@ public final class FileProtocol {
                 @Override public int read() throws IOException { int value=in.read(); if(value>=0)try{signature.update((byte)value);}catch(SignatureException e){throw new IOException(e);} return value; }
                 @Override public int read(byte[] bytes,int offset,int count) throws IOException { int read=in.read(bytes,offset,count); if(read>0)try{signature.update(bytes,offset,read);}catch(SignatureException e){throw new IOException(e);} return read; }
             });
-            key=Protocol.rsa(Cipher.DECRYPT_MODE,privateKey,own.equals(header.recipient)?header.forRecipient:header.forSender);
+            key=GroupKey.unwrap(group,privateKey,own.equals(header.recipient)?header.forRecipient:header.forSender,"file",header.bytes,header.layered);
             if(key.length!=32)throw new SecurityException("Invalid file key");
             String name=null,mime=null; long total=0; int index=0;
             while (true) {
@@ -160,7 +162,7 @@ public final class FileProtocol {
             byte[] sig=new byte[256]; raw.readFully(sig);
             if (raw.read()!=-1 || !signature.verify(sig)) throw new SecurityException("File signature invalid or file was changed");
             Expiry.check(header.createdAt,header.expiresAt,group.expires);
-            Verified verified=new Verified(file,header,key,name,mime,total,previouslyOpened,group.expires); success=true; return verified;
+            PairingProtocol.applyRoster(group,candidate);Verified verified=new Verified(file,header,key,name,mime,total,previouslyOpened,group.expires); success=true; return verified;
         } finally { if (!success && key!=null) Arrays.fill(key,(byte)0); }
     }
 

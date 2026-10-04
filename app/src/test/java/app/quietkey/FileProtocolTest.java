@@ -59,7 +59,7 @@ public final class FileProtocolTest {
     }
     @Test public void groupSeedIsNotTheFileKey() throws Exception {
         encrypt(new byte[]{1},"a","application/octet-stream"); Arrays.fill(receiver.seed,(byte)0);
-        try(FileProtocol.Verified verified=FileProtocol.inspect(receiver,file,b.getPublic(),b.getPrivate())) { assertEquals(1,verified.size); }
+        assertThrows(javax.crypto.AEADBadTagException.class,()->FileProtocol.inspect(receiver,file,b.getPublic(),b.getPrivate()));
     }
     @Test public void signatureTamperingIsRejected() throws Exception {
         encrypt(new byte[]{1},"a","application/octet-stream"); byte[] bytes=Files.readAllBytes(file.toPath()); bytes[bytes.length-1]^=1; Files.write(file.toPath(),bytes);

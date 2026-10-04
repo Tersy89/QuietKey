@@ -13,7 +13,7 @@ public final class MessageRecord {
     JSONObject json()throws Exception {JSONObject j=new JSONObject();j.put("id",id);j.put("group",group);j.put("sender",sender);j.put("recipient",recipient);j.put("kind",kind);j.put("payload",payload);j.put("name",name);j.put("created",createdAt);j.put("expires",expiresAt);j.put("outgoing",outgoing);return j;}
     static MessageRecord read(JSONObject j)throws Exception{
         String kind=j.getString("kind"),payload=j.getString("payload");
-        if((!kind.equals("text") && !kind.equals("file")) || (kind.equals("text")?payload.length()>30000:!payload.matches("[0-9a-f-]{36}\\.enigma")))throw new SecurityException("Invalid message history");
+        if((!kind.equals("text") && !kind.equals("file")) || (kind.equals("text")?payload.length()>75000:!payload.matches("[0-9a-f-]{36}\\.enigma")))throw new SecurityException("Invalid message history");
         return new MessageRecord(j.getString("id"),j.getString("group"),j.getString("sender"),j.getString("recipient"),kind,payload,j.getString("name"),j.getLong("created"),j.getLong("expires"),j.getBoolean("outgoing"));
     }
 }

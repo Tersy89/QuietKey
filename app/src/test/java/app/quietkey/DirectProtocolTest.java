@@ -33,9 +33,9 @@ public final class DirectProtocolTest {
     @Test public void changingExpiryBreaksSignatureAndGcmBinding()throws Exception{
         byte[] packet=Protocol.un64(wire().substring(5));DataInputStream outer=new DataInputStream(new ByteArrayInputStream(packet));int bodySize=outer.readInt();int headerSize=outer.readInt();byte[] header=new byte[headerSize];outer.readFully(header);
         DataInputStream h=new DataInputStream(new ByteArrayInputStream(header));for(int i=0;i<4;i++)h.readUTF();long created=h.readLong();int expiryOffset=headerSize-h.available();ByteBuffer.wrap(packet).putLong(8+expiryOffset,created+3600000);
-        String changed="QKD2:"+Protocol.b64(packet);assertThrows(SecurityException.class,()->DirectProtocol.decrypt(receiver,changed,b.getPublic(),b.getPrivate()));
+        String changed="QKD3:"+Protocol.b64(packet);assertThrows(SecurityException.class,()->DirectProtocol.decrypt(receiver,changed,b.getPublic(),b.getPrivate()));
         Signature signer=Signature.getInstance("SHA256withRSA");signer.initSign(a.getPrivate());signer.update(packet,4,bodySize);System.arraycopy(signer.sign(),0,packet,packet.length-256,256);
-        assertThrows(javax.crypto.AEADBadTagException.class,()->DirectProtocol.decrypt(receiver,"QKD2:"+Protocol.b64(packet),b.getPublic(),b.getPrivate()));
+        assertThrows(javax.crypto.AEADBadTagException.class,()->DirectProtocol.decrypt(receiver,"QKD3:"+Protocol.b64(packet),b.getPublic(),b.getPrivate()));
     }
     @Test public void recipientCanReadAndSenderCanReadOwnCopy() throws Exception {
         String wire=wire();assertEquals("Private 👋",DirectProtocol.decrypt(receiver,wire,b.getPublic(),b.getPrivate()).text);
@@ -47,7 +47,7 @@ public final class DirectProtocolTest {
         assertThrows(Exception.class,()->DirectProtocol.decrypt(third,wire,b.getPublic(),c.getPrivate()));
     }
     @Test public void groupSeedDoesNotDecryptPrivateContent() throws Exception {
-        String wire=wire();Arrays.fill(receiver.seed,(byte)0);assertEquals("Private 👋",DirectProtocol.decrypt(receiver,wire,b.getPublic(),b.getPrivate()).text);
+        String wire=wire();Arrays.fill(receiver.seed,(byte)0);assertThrows(javax.crypto.AEADBadTagException.class,()->DirectProtocol.decrypt(receiver,wire,b.getPublic(),b.getPrivate()));
     }
     @Test public void nonMembersCannotBeRecipients() throws Exception {
         assertThrows(SecurityException.class,()->DirectProtocol.encrypt(group,Protocol.b64(Protocol.random(32)),"No",a.getPublic(),a.getPrivate()));
@@ -59,8 +59,8 @@ public final class DirectProtocolTest {
     }
     @Test public void tamperingTruncationAndOversizeRejected() throws Exception {
         String wire=wire();byte[] bytes=Protocol.un64(wire.substring(5));bytes[bytes.length-1]^=1;
-        assertThrows(Exception.class,()->DirectProtocol.decrypt(receiver,"QKD2:"+Protocol.b64(bytes),b.getPublic(),b.getPrivate()));
-        assertThrows(Exception.class,()->DirectProtocol.decrypt(receiver,"QKD2:AAAA",b.getPublic(),b.getPrivate()));
+        assertThrows(Exception.class,()->DirectProtocol.decrypt(receiver,"QKD3:"+Protocol.b64(bytes),b.getPublic(),b.getPrivate()));
+        assertThrows(Exception.class,()->DirectProtocol.decrypt(receiver,"QKD3:AAAA",b.getPublic(),b.getPrivate()));
         assertThrows(IllegalArgumentException.class,()->DirectProtocol.encrypt(group,Protocol.fingerprint(b.getPublic()),"x".repeat(16001),a.getPublic(),a.getPrivate()));
     }
     @Test public void wrongGroupExpiredGroupAndTrailingDataRejected() throws Exception {
@@ -68,6 +68,6 @@ public final class DirectProtocolTest {
         assertThrows(SecurityException.class,()->DirectProtocol.decrypt(other,wire,b.getPublic(),b.getPrivate()));
         Protocol.Group expired=new Protocol.Group(group.id,group.name,group.seed,1,group.owner);expired.members.putAll(group.members);
         assertThrows(SecurityException.class,()->DirectProtocol.encrypt(expired,Protocol.fingerprint(b.getPublic()),"No",a.getPublic(),a.getPrivate()));
-        byte[] bytes=Protocol.un64(wire.substring(5));assertThrows(Exception.class,()->DirectProtocol.decrypt(receiver,"QKD2:"+Protocol.b64(Arrays.copyOf(bytes,bytes.length+1)),b.getPublic(),b.getPrivate()));
+        byte[] bytes=Protocol.un64(wire.substring(5));assertThrows(Exception.class,()->DirectProtocol.decrypt(receiver,"QKD3:"+Protocol.b64(Arrays.copyOf(bytes,bytes.length+1)),b.getPublic(),b.getPrivate()));
     }
 }
