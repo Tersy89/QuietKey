@@ -79,3 +79,14 @@ NOT PERFORMED: independent security/cryptographic audit.
 
 Install Enigma.apk over the existing test app to retain access. Use the Device
 reset only when intentionally deleting its keys/data. See TESTING.md and SECURITY.md.
+
+4 October 2026 security review addendum (APK/application unchanged):
+PASS: Full JVM suite now 39 JUnit entries, 0 failures/errors / 59 portable checks.
+      Five SecurityReviewTest methods exercise C's raw private-key unwrap failure,
+      refusal of C-signed impersonation of A, independent group secrets with reused
+      device identities, and forged/non-owner invitation refusal.
+CONFIRMED GAP: Existing endpoint keys decrypt QKD2 and file-v2 without the group
+      secret. It is used to create, not to unwrap, the final content key. This does
+      not supply an independent group-secret requirement at reception.
+See SECURITY_REVIEW.md for findings and the two admission-policy choices.
+No new pairing flow/protocol/APK or physical-phone test was performed by this review.
