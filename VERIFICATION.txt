@@ -1,71 +1,99 @@
-Enigma 0.4.0 development verification — 4 October 2026
+Enigma 0.4.1 development verification — 4 October 2026
 
 Editable QuietKey repository; synced sources/ remained read-only.
 README.md, SECURITY.md, TESTING.md and VERIFICATION.txt read before development.
 Repository confirmed private, main branch; local tools/keys/device data/logs/previews ignored.
 
 Toolchain: Temurin JDK 17.0.20.1+1, checksum-pinned Gradle 8.9, AGP 8.7.3,
-SDK/target 35/min 26, Build Tools 34.0.0. Bouncy Castle 1.86 low-level Argon2id.
-Disposable EnigmaTest Android 15/API 35 emulator, emulated camera. No physical phone.
+SDK/target 35/min 26, Build Tools 34.0.0. AndroidX Biometric 1.1.0, Fragment 1.8.5,
+ZXing embedded 4.3.0, Bouncy Castle 1.86 low-level Argon2id.
+Disposable EnigmaTest Android 15/API 35 emulator. No physical phone connected.
 
 PASS: Final build: JVM tests, app/instrumentation APK compilation and lint.
       60 JUnit entries, zero failures/errors = 80 portable checks:
       original 21 checks through one entry, direct 10, file 20, expiry 3,
       security review 5, joining/directory/frame 17, password 4.
-      Password tests include Argon2id RFC9106 known-answer vector, real fixed
+      Password checks include Argon2id RFC9106 known-answer vector, real fixed
       64 MiB derivation, wrong-password/tamper failures and master-key rewrap.
-PASS: Original standalone 21 checks; UTF-8 syntax parser accepts 27 Java files.
-PASS: Lint: zero errors, 34 warnings (localization, portrait orientation,
+PASS: Original standalone 21 checks; UTF-8 syntax parser accepts 28 Java files.
+PASS: Lint: zero errors, 37 warnings (localization, portrait orientation,
       dependencies/deprecations and similar development items).
-PASS: Joining tests: recipient-only invitation, wrong private key/request,
-      tampering/expired request, forged/nonowner admission failure without mutation,
+PASS: Joining: recipient-only invitation, wrong private key/request,
+      tampering/expired request, forged/nonowner admission rejection,
       complete directory import, automatic new-member introduction via text/files,
       rejected directory forgery/rollback, local blocks, explicit owner reinvitation,
       signed confirmation/replay rejection and reordered/duplicate/corrupt QR frames.
       Tampered incoming file cannot commit a newer directory.
-PASS: New QKD3 and file-v3 reject wrong group secret even with an endpoint key;
+PASS: QKD3 and file-v3 reject wrong group secret even with an endpoint key;
       third-member C cannot decrypt A-to-B packets or sign as A despite shared seed.
 
-PASS: Four Android methods on the disposable emulator:
-      - Existing real Keystore signing/OAEP/private-file/vault tests.
-      - Password vault: device-bound envelope, wrong passphrase/master key,
-        corrupted vault/envelope rejection, format 2 persistence, closed-session
-        secret clearing/refusal, password replacement preserves stored groups.
-      - UI first-use passphrase then live-camera setup, four tabs, explicit
-        recipient selection, QKD3 text/history/replay and five-minute TTL.
-      - Manual/background lock requires unlock; drafts/plaintext clear; FLAG_SECURE.
-      - Actual system picker chooses, encrypts, saves, reopens and restores exact
-        200,000-byte binary content; readable export requires fresh passphrase.
-      - Guide and fresh-auth reset cancellation preserve groups/history.
-      - Owner admission confirmation produces encrypted invitation and persists
-        Invited/pending state. Recipient import uses actual Keystore private key,
-        imports all owner-approved keys/secret and preserves existing history.
-      - Actual owner scanner and continuous joining scanner launch/cancel;
-        cancelled scan ends the controlled handoff allowance.
-      UI invitation tests inject complete packets at Activity method boundaries;
-      they do not claim two physical cameras scanned cycling screen QRs.
-PASS: Final APK installed with normal preserving phone helper on populated 0.4
-      emulator storage. Two default Keystore methods pass; UI/password-vault
-      methods skip. Stored groups.qkv and password.qkl hashes remain identical,
-      and app remains installed. Only the disposable emulator was used.
-PASS: Local previews inspected: password setup, Home, Groups, Device,
-      locked screen and newly joined group; retained dark secure theme.
+PASS: Seven Android test methods across the final suite and targeted biometric
+      rerun, all opted in on the disposable emulator:
+      - Real Keystore signing/OAEP/private-file/vault tests (two methods).
+      - Device-bound password envelope/vault, wrong password/key/corruption,
+        closed-session refusal and password replacement preserves stored groups.
+      - First-use UI: passphrase creation and Show/hide toggle preserves typed value;
+        five-second/60-frame camera setup, compact Home/Groups/Device, guide,
+        explicit recipient selection, QKD3 text/history/replay and five-minute TTL.
+        Manual/background lock, cleared drafts, FLAG_SECURE and password unlock.
+        Actual Android picker encrypts/saves/reopens/restores a 200,000-byte file;
+        readable export requires fresh passphrase. Reset cancellation retains data.
+        Owner invitation confirmation and recipient import with actual Keystore
+        identity preserve existing history. This part injects complete packets
+        at Activity boundaries, not a two-phone screen-to-camera exchange.
+      - Generated request/invitation QR frames decode at native 960/720/480/320
+        pixels; decoded frames then reach production scanner collection/result
+        and reconstruct the full invitation. Uses real QR image decoding; frame
+        submission to the collector remains an injected test boundary.
+      - Live camera test: emulator imagefile camera reads a 527-character production
+        QR through the actual preview/decoder/callback and returns the exact packet.
+        Native 320-pixel code in padded fixture compensates emulator projection.
+        No decoded strings are injected in this camera test. Fixture-only preparation
+        is explicitly skipped and was not counted as successful camera validation.
+      - Biometric: real Android strong-fingerprint prompt and authenticated Keystore
+        cipher enable vault unlock. Host emulator fingerprint touch 1 authenticates
+        enable and unlock. Cancel keeps vault locked; fresh passphrase is required
+        for enabling/disabling. No prompt-success callback is injected.
+The combined final suite passed six methods; its biometric method timed out
+because the host did not supply fingerprint input within 25 seconds. The same
+method then passed on the final APK with host fingerprint input supplied at both
+READY stages (11.614 seconds). This was a missing test interaction, not a bypass.
 
-APK: app.quietkey.debug, versionCode 4, versionName 0.4.0-debug, label Enigma (test).
-Permissions: CAMERA, USE_BIOMETRIC and AndroidX app-specific signature permission;
-no Internet, microphone or broad-storage permission. Backups disabled;
-scanner/FileProvider nonexported; FileProvider path exposes ciphertext cache only.
+PASS: Final APK installed with preserving device-tests helper on populated emulator.
+      Two default Keystore methods pass; five opt-in methods explicitly skip.
+      Stored groups.qkv/password.qkl hashes remain identical; app remains installed.
+PASS: Inspected own emulator previews: password setup, Home, Groups and Device.
+
+Changes relevant to regressions:
+- Unified QR-only continuous scanner, SurfaceView/FitCenter and full visible frame,
+  autofocus and optional torch; all joining directions collect multi-frame QR.
+- Smaller 480-character chunks (maximum 64), static cutoff 600, full-screen white
+  QR background, native pixel encoding, brightness, 2.5-second cycling and controls.
+- AndroidX Biometric compatibility for API 26+, explicitly per-operation Keystore
+  auth, and AAD supplied only after successful cryptographic authentication.
+- Removed String.isBlank/List.of API incompatibilities on older Android devices.
+- Simple Home sending, group details page, Device security subpage and current guide.
+- Show/hide on password setup, unlock, fresh authentication and password change.
+
+APK: app.quietkey.debug, versionCode 5, versionName 0.4.1-debug, label Enigma (test).
+Permissions: CAMERA, USE_BIOMETRIC, USE_FINGERPRINT and AndroidX app-specific
+signature permission. No Internet, microphone or broad-storage permission.
+Backups disabled; scanner/FileProvider nonexported; ciphertext cache sharing only.
 Signer remains previous debug signer, certificate SHA-256:
 2aca54e2570fbbd3caaf35a523c8c21a19d3cf553eaf53937590905d402836b7
 
 Enigma.apk SHA-256:
-8ED216142D322CF327770BB99F9138589A6A7AE8F77A3F8F4637497DB298A53C
+AE3E6AE2596FE5BF9C34D418EECD619B5F57515376D81EBB43B38ADB10213185
 
-NOT RUN: physical-phone two/three-device QR collection; vendor camera/Keystore;
-         enrolled biometric prompt/unlock/invalidation on a real device;
-         full 0.4 destructive reset (fresh-auth/cancellation verified; full OS reset
+NOT RUN: Huawei P30/Samsung S23 vendor camera/focus and biometric prompts;
+         two/three-physical-device cycling screen QR transfer;
+         enrolled biometric invalidation on a physical device;
+         full 0.4.1 destructive reset (fresh-auth/cancellation verified; full OS reset
          and new identity were verified in 0.3); phone-update retention;
          large-font/accessibility checks. No independent security audit.
+Earlier 0.4 evidence covered scanner launch/cancel, not actual QR camera decoding
+or enrolled biometric unlock. These additional regressions now cover an emulator;
+physical-phone fixes still require the owner's confirmation.
 
 Limits: static identity keys/no forward secrecy or ratchet; no automatic group
 rekey/owner transfer/recovery; local removal does not revoke retained secrets;
@@ -75,6 +103,8 @@ are not per-operation user-auth bound. Unlocked endpoint compromise remains a ri
 The protected vault is local app storage, not a dedicated personal file-storage feature.
 Old formats do not gain new group-secret protection; compatibility is not a DEV promise.
 
-SYSTEM_DESIGN.md describes implemented 0.4 architecture, workflows and limits;
+SYSTEM_DESIGN.md describes implemented 0.4.1 architecture, workflows and limits;
 AGENTS.md requires maintaining it in the same change as future design changes.
-Install on both phones, choose an app passphrase, then test README's two-QR joining.
+Install over the existing test app on both phones. Use Device → Security & unlock;
+if an old biometric setup fails, disable/enable it again after passphrase unlock.
+Follow README's two-QR joining and collect every frame without leaving the scanner.

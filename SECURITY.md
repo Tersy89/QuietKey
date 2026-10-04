@@ -1,4 +1,4 @@
-# Enigma 0.4 security model
+# Enigma 0.4.1 security model
 
 Development prototype, not independently audited. See SYSTEM_DESIGN.md for implemented architecture/formats and VERIFICATION.txt for executed evidence. SECURITY_REVIEW.md records the historical 0.3 findings; new 0.4 formats correct the independent group-secret requirement.
 
@@ -31,7 +31,7 @@ The first owner identity is authenticated by the direct physical pairing context
 
 Owner-signed directories pin group/owner/expiry, distinct member keys/names and increasing revisions. Updates verify against the pinned owner key; old revisions do not roll back current trust, and conflicting equal revisions fail. Local blocked identities remain blocked unless the owner explicitly reinvites that device. Encrypted directory carriers in new messages/files automatically introduce approved members after packet authentication. Devices receive changes only when a packet reaches them; there is no network synchronization or immediate group-wide revocation.
 
-Large invitations cycle QKF1 frames; continuous scanning reassembles bounded unique frames in any order, with five-minute collection timeout, 25-frame/30,000-character limits and complete SHA-256 transfer digest verification. That digest is not sender authentication. No partial frame modifies membership. Group size is limited to 30 devices.
+Requests and large invitations cycle QKF1 frames; continuous scanning reassembles bounded unique frames in any order, with five-minute collection timeout, 64-frame/30,000-character limits (480 payload characters per frame) and complete SHA-256 transfer digest verification. That digest is not sender authentication. No partial frame modifies membership. Group size is limited to 30 devices.
 
 ## Password, biometric and stored-data protection
 
@@ -39,7 +39,7 @@ The app requires a 12–128-character passphrase. Argon2id v1.3 derives a 32-byt
 
 Vault format 2 uses the master key, fresh 12-byte nonce and AAD Enigma-vault-v2. groups.qkv stores group seeds, signed directories, aliases/blocks, joining/replay state, encrypted text and history metadata. Atomic synced/verified commits fail closed on corruption/missing keys. The vault ciphertext limit is 24 MiB. This is cryptographic encryption, not just a password UI check.
 
-Optional biometric unlock on API28+ is an explicitly enabled alternative. A separate per-operation authentication-bound Keystore AES key wraps the same master key. BiometricPrompt/CryptoObject must authorize the cryptographic operation; strong biometrics are explicitly requested on API30+. Changed enrollment invalidates this route where supported. Password change disables it. Fresh password entry is still required for readable-file export, reset, password change and biometric configuration.
+Optional biometric unlock uses AndroidX Biometric on API26+ with supported strong enrolled biometrics and is an explicitly enabled alternative. A separate per-operation authentication-bound Keystore AES key wraps the same master key. AndroidX BiometricPrompt/CryptoObject requests BIOMETRIC_STRONG and must authorize the cryptographic operation. GCM AAD and finalization occur only after successful authentication; cancellation cannot open the vault. Unsupported hardware or invalidated keys retain the passphrase route. Changed enrollment invalidates this route where supported. Password change disables it. Fresh password entry is still required for readable-file export, reset, password change and biometric configuration.
 
 The RSA identity and device password-envelope key are not themselves configured for per-operation user authentication. Password protection encrypts the group secrets/local vault; it does not physically bind every RSA operation to the password. A compromised executing app can potentially invoke those Keystore keys. Hardware-backed storage is device-dependent. Password/bio authentication cannot make a compromised unlocked endpoint safe.
 
@@ -47,7 +47,7 @@ Unlock and fresh-auth wrong attempts have a persistent increasing UI delay cappe
 
 ## Session, history, expiry and exports
 
-Leaving the app locks the session, clears UI and queues disposal of loaded secrets; screen-off always locks. Camera/scanner/document-picker handoffs have a maximum two-minute allowance. Session generation checks reject stale asynchronous results; readable export checks the session while writing. Missing/locked state refuses protected actions. FLAG_SECURE covers app/scanner windows; external cameras remain possible.
+Leaving the app locks the session, clears UI and queues disposal of loaded secrets; screen-off always locks. Camera setup/document-picker handoffs have a maximum two-minute allowance; QR scanning allows up to five minutes, bounded by the joining lifetime. Session generation checks reject stale asynchronous results; readable export checks the session while writing. Missing/locked state refuses protected actions. FLAG_SECURE covers app/scanner windows; external cameras remain possible.
 
 Java strings/keys/plaintext exist in RAM while unlocked. Byte arrays are cleared where practical; full zeroization of every copy is not guaranteed. Keyboard suggestions/learning and autofill are disabled by request, not a defense against a malicious keyboard.
 

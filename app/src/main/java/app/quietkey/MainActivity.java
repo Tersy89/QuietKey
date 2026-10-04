@@ -14,19 +14,21 @@ import android.text.InputType;
 import android.view.*;
 import android.view.inputmethod.EditorInfo;
 import android.widget.*;
-import androidx.activity.ComponentActivity;
+import androidx.fragment.app.FragmentActivity;
+import androidx.biometric.BiometricManager;
+import androidx.biometric.BiometricPrompt;
+import androidx.core.content.ContextCompat;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.FileProvider;
 import com.google.zxing.*;
 import com.google.zxing.common.BitMatrix;
-import com.journeyapps.barcodescanner.*;
 import java.io.*;
 import java.text.DateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 
-public final class MainActivity extends ComponentActivity {
+public final class MainActivity extends FragmentActivity {
     private static final int BG=0xff080f1d, CARD=0xff111e30, LINE=0xff20344b, WHITE=0xffedf5ff, MUTED=0xff93a9bf, GREEN=0xff4be3c1;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Handler ui=new Handler(Looper.getMainLooper());
@@ -35,8 +37,9 @@ public final class MainActivity extends ComponentActivity {
     private volatile int session;
     private volatile boolean sessionLocked=true;
     private boolean handoff;private long handoffUntil;
-    private AlertDialog transientDialog;
-    private QrTransfer qrTransfer;
+    private android.app.Dialog transientDialog;
+    private BiometricPrompt biometricPrompt;
+    private int biometricAttempt;
     private String restoredGroup;
     private final BroadcastReceiver screenLock=new BroadcastReceiver(){public void onReceive(Context c,Intent i){lockNow();}};
     private volatile boolean broken;
@@ -54,7 +57,6 @@ public final class MainActivity extends ComponentActivity {
     private File encryptedFile;
     private FileProtocol.Verified verifiedFile;
     private ActivityResultLauncher<Intent> capture,saveFile,joinScanner;
-    private ActivityResultLauncher<ScanOptions> scanner;
     private ActivityResultLauncher<String[]> openFile;
     private interface Job<T>{T run()throws Exception;}
     private interface Success<T>{void run(T result)throws Exception;}
@@ -75,12 +77,7 @@ public final class MainActivity extends ComponentActivity {
             byte[] digest=result.getData().getByteArrayExtra("digest");
             returnedFromHandoff();if(vault==null){if(digest!=null)Arrays.fill(digest,(byte)0);error("Unlock and start camera capture again.");return;}captured(digest);
         });
-        scanner=registerForActivityResult(new ScanContract(),result->{
-            returnedFromHandoff();
-            if(result.getContents()==null)return;
-            returnedFromHandoff();if(vault==null){waitingQr=result.getContents();return;}scanned(result.getContents());
-        });
-        joinScanner=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null){String packet=result.getData().getStringExtra("packet");if(vault==null){waitingQr=packet;scanAction="join";}else join(packet);}});
+        joinScanner=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null){String packet=result.getData().getStringExtra("packet");if(vault==null)waitingQr=packet;else scanned(packet);}});
         openFile=registerForActivityResult(new ActivityResultContracts.OpenDocument(),uri->{
             returnedFromHandoff();if(uri!=null){if(vault==null)error("Please choose the file again after initialization.");else pickedFile(uri);}
         });
@@ -100,7 +97,7 @@ public final class MainActivity extends ComponentActivity {
         root.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(dp(20),insets.getSystemWindowInsetTop()+dp(12),dp(20),insets.getSystemWindowInsetBottom()+dp(12));return insets;});
         LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
         ImageView icon=new ImageView(this);icon.setImageResource(R.drawable.ic_enigma);icon.setContentDescription("Enigma shield");header.addView(icon,new LinearLayout.LayoutParams(dp(42),dp(42)));
-        LinearLayout brand=column();brand.addView(label("ENIGMA",22,WHITE));brand.addView(label("PRIVATE BY DESIGN",10,GREEN));header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout brand=column();brand.addView(label("ENIGMA",22,WHITE));header.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
         header.addView(label("● OFFLINE",10,GREEN));root.addView(header);
         progress=label("",11,MUTED);root.addView(progress);
         scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);
@@ -110,24 +107,20 @@ public final class MainActivity extends ComponentActivity {
     private void render() {
         if(isDestroyed())return;if(vault==null){lockScreen();return;}
         body.removeAllViews();message=null;output=null;nav.removeAllViews();recipientActions.clear();
-        progress.setText(busy?"Securing your data…":"ON-DEVICE KEYS  /  AUTHENTICATED ENCRYPTION");
+        progress.setText("Working…");progress.setVisibility(busy?View.VISIBLE:View.GONE);
         if(!vault.setupCompleted){setup();return;}
         String[] tabs={"home","messages","groups","identity"},names={"Home","Messages","Groups","Device"};
         for(int i=0;i<tabs.length;i++){
             String tab=tabs[i];Button b=button(names[i],()->{page=tab;render();});b.setTextSize(10);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);
-            boolean active=tab.equals(page) || (tab.equals("messages") && (page.equals("files") || page.equals("compose"))) || (tab.equals("groups") && page.equals("members"));
+            boolean active=tab.equals(page) || (tab.equals("messages") && (page.equals("files") || page.equals("compose"))) || (tab.equals("groups") && (page.equals("members") || page.equals("group-details"))) || (tab.equals("identity") && page.equals("security"));
             b.setTextColor(active?BG:MUTED);b.setBackground(shape(active?GREEN:CARD,12,0));
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(46),1);p.setMargins(dp(2),0,dp(2),0);nav.addView(b,p);
         }
-        switch(page){case "messages":messages();break;case "compose":compose();break;case "files":files();break;case "groups":groups();break;case "members":memberList();break;case "identity":identity();break;default:home();}
+        switch(page){case "messages":messages();break;case "compose":compose();break;case "files":files();break;case "groups":groups();break;case "members":memberList();break;case "group-details":groupDetails();break;case "security":securitySettings();break;case "identity":identity();break;default:home();}
         scroll.post(()->scroll.scrollTo(0,0));
     }
     private void setup() {
-        badge("YOUR PRIVATE SPACE",false);title("Set up your device");note("Give this device a name, then collect live camera frames to create an independent starter group secret.");
-        LinearLayout card=card();card.addView(label("01   DEVICE IDENTITY",11,GREEN));card.addView(label("Private key protected on this device",17,WHITE));
-        card.addView(label("Android Keystore creates your device's public/private key pair using secure system randomness. The private key is not exported.",14,MUTED));
-        card.addView(label("02   GROUP SECRET",11,GREEN));card.addView(label("Add five seconds of camera input",17,WHITE));
-        card.addView(label("Live frame hashes are mixed with system randomness to make a separate personal vault secret. No video or audio is saved. Camera input does not replace Android's private-key generator.",14,MUTED));body.addView(card);
+        title("Set up your device");note("Name your device, then move its camera for five seconds. No video is saved.");
         EditText name=editor("Device name, e.g. Chris's phone",false);name.setText(vault.deviceName.equals("This device")?"":vault.deviceName);limit(name,40);body.addView(name);
         body.addView(primary("Set up with live camera",()->{
             String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("Name this device");return;}
@@ -139,7 +132,7 @@ public final class MainActivity extends ComponentActivity {
                 String value=name.getText().toString().trim();work(()->{vault.deviceName=value.isEmpty()?"This device":value;vault.setupCompleted=true;persist();return true;},ok->{page="home";render();});
             }));
         }
-        note("Keep this installation: uninstalling or clearing app storage loses its private keys. Enigma encrypts text and files; it does not route internet traffic.");
+
     }
     private void captured(byte[] digest) {
         String name=pendingName;boolean setup="setup".equals(capturePurpose);
@@ -155,46 +148,42 @@ public final class MainActivity extends ComponentActivity {
         },group->{selected=group;chooseDefaultRecipient();page=setup?"home":"groups";capturePurpose=null;render();});
     }
     private void home() {
-        title("Ready when you are.");note(vault.deviceName+" • choose a group and a verified recipient");
-        if(selected==null){body.addView(primary("Set up a group",()->{page="groups";render();}));return;}
+        title("Send privately");
+        if(selected==null){note("Create or join a group to start.");body.addView(primary("Set up a group",()->{page="groups";render();}));return;}
         selectors();
         body.addView(recipientButton("Write a message",()->{page="compose";render();}));
         body.addView(recipientButton("Send a file or image",()->{page="files";render();}));
-        body.addView(button("Open messages",()->{page="messages";render();}));
-        LinearLayout summary=card();summary.addView(label("YOUR GROUPS",11,GREEN));
-        for(Protocol.Group g:vault.groups)summary.addView(button(g.name+" · "+Math.max(0,g.members.size()-1)+" other member(s)",()->{selected=g;chooseDefaultRecipient();render();}));body.addView(summary);
-        note("Messages holds your encrypted text and file history. Groups handles pairing and membership. Device holds setup and help.");
     }
     private void identity() {
-        title("About me & my device");body.addView(button("Lock Enigma now",this::lockNow));body.addView(button("Change app passphrase",this::changePassword));if(Build.VERSION.SDK_INT>=28)body.addView(button(passwordLock.biometricConfigured()?"Disable biometric unlock":"Enable biometric unlock",()->reauth("Confirm security change",()->{if(passwordLock.biometricConfigured())work(()->{passwordLock.disableBiometric();return true;},ok->render());else biometric(true);})));note(vault.deviceName+" • your installation identity");
-        LinearLayout about=card();about.addView(label("ENIGMA "+BuildConfig.VERSION_NAME,13,GREEN));about.addView(label("Private text and files, encrypted on your device. No account or Enigma server. Share encrypted packets using your usual messenger.",14,MUTED));body.addView(about);
-        body.addView(button("How to use Enigma",this::guide));
-        LinearLayout card=card();card.addView(label("PRIVATE KEY",11,GREEN));card.addView(label("Stored in Android Keystore",18,WHITE));card.addView(label("Your private key stays on this device. Only your public identity is shown below. Enigma never displays or exports the private key.",14,MUTED));
-        card.addView(label("CAMERA SETUP",11,GREEN));card.addView(label(vault.setupCapturedAt>0?"Completed "+DateFormat.getDateInstance().format(new Date(vault.setupCapturedAt)):"Existing identity retained; starter group not created",14,WHITE));body.addView(card);
+        title("About me & my device");note(vault.deviceName+" · Enigma "+BuildConfig.VERSION_NAME);
+        note(vault.setupCapturedAt>0?"Device setup complete":"Device setup pending");
+        body.addView(primary("How to use Enigma",this::guide));
+        body.addView(button("Security & unlock",()->{page="security";render();}));
+        body.addView(button("My fingerprint",()->{try{qrDialog("My device fingerprint",Protocol.identity(vault.publicKey()),"For joining, use Groups → Join group.\n\n"+pretty(ownId));}catch(Exception e){error(e.getMessage());}}));
         body.addView(button("Rename this device",()->editName("Device name",vault.deviceName,40,value->work(()->{vault.deviceName=value;for(Protocol.Group g:vault.groups)g.memberNames.put(ownId,value);persist();return true;},ok->render()))));
         if(vault.personalGroupId==null)body.addView(button("Create starter group with camera",()->{pendingName=vault.deviceName;capturePurpose="setup";beginHandoff();capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","setup"));}));
-        LinearLayout qr=card();qr.addView(label("PUBLIC IDENTITY QR",11,GREEN));
-        try{showInlineQr(qr,Protocol.identity(vault.publicKey()));qr.addView(label("Compare the full fingerprint in person",13,GREEN));qr.addView(label(pretty(ownId),13,WHITE));}catch(Exception e){error(e.getMessage());}body.addView(qr);
-        note("To join a group, use Groups → Join group to show your joining QR. This public identity is available for fingerprint comparison. Camera input contributes to group-secret generation; Android generates your private device key. This prototype has not had an independent security audit.");
         body.addView(button("Reset app & delete local data",()->reauth("Confirm reset",this::confirmReset)));
     }
+    private void securitySettings(){
+        title("Security & unlock");body.addView(button("Back to device",()->{page="identity";render();}));
+        body.addView(primary("Lock Enigma now",this::lockNow));body.addView(button("Change app passphrase",this::changePassword));
+        body.addView(button(passwordLock.biometricConfigured()?"Disable biometric unlock":"Enable biometric unlock",()->reauth("Confirm security change",()->{if(passwordLock.biometricConfigured())work(()->{passwordLock.disableBiometric();return true;},ok->render());else biometric(true);})));
+        note("Biometrics unlock the app. Your passphrase is still required to change security settings, reset or export readable files.");
+    }
     private void groups() {
-        title("Trusted groups");note("Keep recipients organized. Each group has its own identity, secret and verified member list.");
-        body.addView(primary("Create a group",this::newGroup));body.addView(button("Join group",this::startJoining));
-        if(vault.groups.isEmpty())note("Create a group or scan its owner's invitation to start.");
-        for(Protocol.Group g:vault.groups){
-            LinearLayout card=card();card.addView(label(g.id.equals(vault.personalGroupId)?"STARTER GROUP":isOwner(g)?"GROUP OWNER":"GROUP MEMBER",10,GREEN));
-            card.addView(label(g.name,21,WHITE));card.addView(label(g.members.size()+" owner-approved device(s) • "+(g==selected?"selected":"tap to select"),13,MUTED));
-            card.addView(button(g==selected?"Manage selected group":"Select & manage",()->{selected=g;chooseDefaultRecipient();render();}));
-            if(g==selected){
-                card.addView(label("Expires "+DateFormat.getDateInstance().format(new Date(g.expires)),12,MUTED));
-                card.addView(button("Manage members ("+g.members.size()+")",()->{selected=g;page="members";render();}));
-                if(isOwner(g)){card.addView(button("Invite new recipient",()->scan("invite",g)));card.addView(button("Scan joining confirmation",()->scan("receipt",g)));}
-                card.addView(button("Rename this group",()->editName("Group name",g.name,60,value->work(()->{g.name=value;persist();return true;},ok->render()))));
-                card.addView(button("Remove group from this device",()->deleteGroup(g)));
-            }body.addView(card);
-        }
-        note("Use Home for quick sending and Messages for text and files. Removing local trust does not revoke keys held on another device.");
+        title("Groups");LinearLayout actions=new LinearLayout(this);Button create=button("Create a group",this::newGroup),join=button("Join group",this::startJoining);actions.addView(create,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams jp=new LinearLayout.LayoutParams(0,-2,1);jp.setMargins(dp(8),0,0,0);actions.addView(join,jp);body.addView(actions);
+        if(vault.groups.isEmpty())note("No groups yet.");
+        for(Protocol.Group g:vault.groups){body.addView(button(g.name,()->{selected=g;chooseDefaultRecipient();page="group-details";render();}));note(g.members.size()+" members · "+(isOwner(g)?"You own this group":"Member"));}
+    }
+    private void groupDetails(){
+        Protocol.Group g=selected;if(g==null){page="groups";groups();return;}
+        title(g.name);body.addView(button("Back to groups",()->{page="groups";render();}));
+        if(isOwner(g))body.addView(primary("Invite new recipient",()->scan("invite",g)));
+        body.addView(button("Manage members ("+g.members.size()+")",()->{page="members";render();}));
+        body.addView(button("Send a message",()->{page="home";render();}));
+        if(isOwner(g))body.addView(button("Scan joining confirmation",()->scan("receipt",g)));
+        body.addView(button("Rename this group",()->editName("Group name",g.name,60,value->work(()->{g.name=value;persist();return true;},ok->render()))));
+        body.addView(button("Remove group from this device",()->deleteGroup(g)));
     }
     private void newGroup() {editName("Create a group","",60,value->{pendingName=value;capturePurpose="group";beginHandoff();capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","group"));});}
     private void deleteGroup(Protocol.Group g) {
@@ -212,17 +201,15 @@ public final class MainActivity extends ComponentActivity {
     private void scan(String action,Protocol.Group g) {
         if("invite".equals(action) && (g==null || !isOwner(g))){error("Only the group creator can invite members.");return;}
         scanAction=action;scanGroupId=g==null?null:g.id;
-        ScanOptions options=new ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setOrientationLocked(true).setCaptureActivity(SecureCaptureActivity.class).setPrompt(action.equals("join")?"Scan the owner's invitation (all frames if shown)":action.equals("receipt")?"Scan the joining confirmation":"Scan their Join group QR");beginHandoff();scanner.launch(options);
+        beginHandoff(PairingProtocol.WINDOW);joinScanner.launch(new Intent(this,JoinScanActivity.class).putExtra("expected",action.equals("invite")?"QKJ1:":action.equals("receipt")?"QKA1:":"QKG2:"));
     }
     private void startJoining(){
-        work(()->{if(vault.joiningRequest.isEmpty()){vault.joiningRequest=PairingProtocol.request(vault.publicKey(),vault.privateKey(),vault.deviceName);persist();}else try{PairingProtocol.parseRequest(vault.joiningRequest);}catch(Exception e){vault.joiningRequest=PairingProtocol.request(vault.publicKey(),vault.privateKey(),vault.deviceName);persist();}return vault.joiningRequest;},request->{
-            LinearLayout view=column();view.setPadding(dp(16),dp(12),dp(16),dp(12));showInlineQr(view,request);view.addView(label("Show this to the group owner. After they scan it, scan their invitation. Only your device can decrypt it.",14,MUTED));
-            transientDialog=new AlertDialog.Builder(this).setTitle("Join group · show my QR").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Scan owner's invitation",(d,w)->{scanAction="join";scanGroupId=null;beginHandoff();joinScanner.launch(new Intent(this,JoinScanActivity.class));}).show();
-        });
+        work(()->{if(vault.joiningRequest.isEmpty()){vault.joiningRequest=PairingProtocol.request(vault.publicKey(),vault.privateKey(),vault.deviceName);persist();}else try{PairingProtocol.parseRequest(vault.joiningRequest);}catch(Exception e){vault.joiningRequest=PairingProtocol.request(vault.publicKey(),vault.privateKey(),vault.deviceName);persist();}return vault.joiningRequest;},request->showTransfer("Join group",request,"Show this QR to the owner, then scan their invitation.","Scan owner's invitation",()->scan("join",null)));
     }
+
     private void scanned(String qr){
         Protocol.Group g=group(scanGroupId);
-        if("join".equals(scanAction)){try{if(qrTransfer==null)qrTransfer=new QrTransfer();String packet=qrTransfer.add(qr);if(packet==null){transientDialog=new AlertDialog.Builder(this).setTitle("Invitation "+qrTransfer.received()+" / "+qrTransfer.total()+" frames").setMessage("Scan the next different frame shown by the owner.").setNegativeButton("Cancel",(d,w)->qrTransfer=null).setPositiveButton("Scan next frame",(d,w)->scan("join",null)).show();}else{qrTransfer=null;join(packet);}}catch(Exception e){qrTransfer=null;error(e.getMessage());}}
+        if("join".equals(scanAction))join(qr);
         else if(g!=null && "receipt".equals(scanAction))work(()->{String member=PairingProtocol.receiptMember(g,qr,vault.pendingInvites);persist();return member;},id->{render();Toast.makeText(this,memberName(g,id)+" joined",Toast.LENGTH_LONG).show();});
         else if(g!=null && "invite".equals(scanAction))work(()->PairingProtocol.parseRequest(qr),request->{
             transientDialog=new AlertDialog.Builder(this).setTitle("Invite "+request.name+"?").setMessage("Invite this device to "+g.name+". Scan directly from their Join group screen. Their public fingerprint is available below for verification.\n\n"+pretty(Protocol.fingerprint(request.key))).setNegativeButton("Cancel",null).setPositiveButton("Invite",(d,w)->work(()->{
@@ -241,7 +228,7 @@ public final class MainActivity extends ComponentActivity {
     }
     private void memberList() {
         Protocol.Group g=selected;if(g==null){page="groups";groups();return;}
-        title(g.name+" members");body.addView(button("Back to groups",()->{page="groups";render();}));
+        title(g.name+" members");body.addView(button("Back to group",()->{page="group-details";render();}));
         for(String id:new ArrayList<>(g.members.keySet())){
             LinearLayout card=card();card.addView(label(memberName(g,id)+(id.equals(g.owner)?" · owner":" · "+g.memberStatus.getOrDefault(id,"Member")),18,WHITE));card.addView(label(pretty(id),12,MUTED));
             if(!id.equals(ownId)){
@@ -262,7 +249,7 @@ public final class MainActivity extends ComponentActivity {
         recipients.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));recipients.setSelection(Math.max(0,ids.indexOf(recipientId)));
         recipients.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){recipientId=ids.get(pos);refreshSendActions();}});body.addView(recipients);
         if(ids.size()==1)note("No other verified member yet. Invite or pair with someone in Groups before sending.");
-        else note("Choose a recipient explicitly. Their public key protects the content key; only they and your device can open the packet.");
+
     }
     private void messages() {
         title("Messages");note("All your text and files, together. Stored encrypted on this device.");
@@ -420,12 +407,12 @@ public final class MainActivity extends ComponentActivity {
     private void guide(){
         ScrollView scroll=new ScrollView(this);LinearLayout steps=column();steps.setPadding(dp(20),dp(10),dp(20),dp(10));scroll.addView(steps);
         String[][] sections={
-            {"1. Set up your device","Name this device and complete live camera setup. Android creates your private key in Keystore; camera input contributes to a separate group secret. Device shows your public identity QR and fingerprint."},
-            {"2. Pair in Groups","B taps Join group and shows the joining QR. The owner taps Invite new recipient, scans B and confirms. B scans the owner’s encrypted invitation, including all frames if shown. Owner-approved member keys import together. Scan directly from the known owner’s device. Existing members receive signed directory updates with new messages/files. Confirmation is optional; a verified reply confirms joining."},
-            {"3. Send from Home","Choose a group, then another verified recipient. There is no automatic recipient. Write a message or send a file. Enigma encrypts to their public key before you share; choose that person in your messenger's delivery screen."},
-            {"4. Messages holds text and files","Encrypt text, attach files, paste received encrypted text, or open a received .enigma file. All newly prepared/received items appear together in encrypted local history. Open history explicitly to read; plaintext clears when backgrounded. Prepared means encrypted, not delivered."},
-            {"5. Message expiry (TTL)","Choose No expiry, 5 minutes, 1 hour, 24 hours, 7 days or 30 days before encrypting text or a file. Expiry starts at encryption and is signed into the packet. Enigma refuses later opening/restoring after expiry, using the device clock. A recipient can retain saved plaintext or use a modified app; TTL cannot recall those copies. Older packets have no message TTL. Both people need Enigma 0.4 for new packets."},
-            {"6. Keys, trust and reset","Keep this installation to retain your keys. Removing local trust does not revoke keys held elsewhere: replace the group when needed. Reset app deletes this installation's keys, groups, encrypted history, setup and cache, and requires pairing again. Files already exported/shared outside the app remain there. Enigma has no recovery, network delivery or independent security audit."}
+            {"1. Protect and set up","Set an app passphrase (12+ characters). Tap Show passphrase to check it. Name your device, then complete five seconds of camera setup."},
+            {"2. Create or join a group","Owner: Groups → Create a group, then open it and tap Invite new recipient. Joiner: Groups → Join group and show your QR to the owner."},
+            {"3. Finish joining","After the owner scans your QR and taps Invite, tap Scan owner's invitation. Keep the full QR in view while its frames change. Group details and member keys import together; no extra key scans are needed."},
+            {"4. Send text or a file","Home → choose a group → choose a recipient → Write a message or Send a file or image. Select a TTL or leave No expiry. Share the encrypted result with that person in your messenger."},
+            {"5. Read received messages","Messages → Open received text to paste a packet, or Receive an encrypted file. Local text and file history appears here. Saving a readable file requires your app passphrase; that saved copy is outside Enigma."},
+            {"6. Unlock and reset","Device → Security & unlock enables fingerprint unlock or changes the passphrase. Backgrounding locks Enigma. Device → Reset app & delete local data requires the passphrase and typed RESET; it deletes local keys/groups/history. There is no recovery."}
         };
         for(String[] section:sections){steps.addView(label(section[0],17,GREEN));steps.addView(label(section[1],14,WHITE));}
         transientDialog=new AlertDialog.Builder(this).setTitle("How to use Enigma").setView(scroll).setPositiveButton("Got it",null).show();
@@ -459,24 +446,44 @@ public final class MainActivity extends ComponentActivity {
     private void closeVerified(){if(verifiedFile!=null){verifiedFile.close();verifiedFile=null;}}
     private String formatSize(long bytes){return bytes>=1048576?String.format(Locale.ROOT,"%.1f MB",bytes/1048576.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
     private void clearResult(){if(output!=null && output.getParent() instanceof View)body.removeView((View)output.getParent());output=null;}
-    private void qrDialog(String title,String packet,String caption)throws Exception {
-        List<String> frames=QrTransfer.frames(packet);LinearLayout view=column();view.setPadding(dp(16),dp(12),dp(16),dp(12));LinearLayout qr=column();view.addView(qr);TextView counter=label("",13,GREEN);view.addView(counter);view.addView(label(caption,14,MUTED));int[] index={0};Runnable show=()->{try{qr.removeAllViews();showInlineQr(qr,frames.get(index[0]));counter.setText("Frame "+(index[0]+1)+" of "+frames.size());}catch(Exception e){error(e.getMessage());}};show.run();
-        if(frames.size()>1){view.addView(button("Previous frame",()->{index[0]=(index[0]+frames.size()-1)%frames.size();show.run();}));view.addView(button("Next frame",()->{index[0]=(index[0]+1)%frames.size();show.run();}));}
-        transientDialog=new AlertDialog.Builder(this).setTitle(title).setView(view).setPositiveButton("Done",null).show();
-        if(frames.size()>1){AlertDialog dialog=transientDialog;Runnable cycle=new Runnable(){public void run(){if(!dialog.isShowing()||sessionLocked)return;index[0]=(index[0]+1)%frames.size();show.run();ui.postDelayed(this,1500);}};dialog.setOnDismissListener(d->ui.removeCallbacks(cycle));ui.postDelayed(cycle,1500);}
+    private void qrDialog(String title,String packet,String caption)throws Exception {showTransfer(title,packet,caption,null,null);}
+    private void showTransfer(String title,String packet,String caption,String actionName,Runnable action)throws Exception {
+        List<String> frames=QrTransfer.frames(packet);android.app.Dialog dialog=new android.app.Dialog(this);LinearLayout view=column();view.setBackgroundColor(BG);view.setPadding(dp(20),dp(20),dp(20),dp(20));view.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(dp(20),insets.getSystemWindowInsetTop()+dp(12),dp(20),insets.getSystemWindowInsetBottom()+dp(12));return insets;});view.addView(label(title,23,WHITE));
+        ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setBackgroundColor(Color.WHITE);image.setContentDescription("Group transfer QR");view.addView(image,new LinearLayout.LayoutParams(-1,0,1));
+        TextView counter=label("",13,GREEN);view.addView(counter);view.addView(label(caption,14,MUTED));int[] index={0};boolean[] paused={false};Runnable show=()->{try{int side=Math.min(image.getWidth(),image.getHeight());image.setImageBitmap(qrBitmap(frames.get(index[0]),side>0?side:960));counter.setText(frames.size()==1?"Ready to scan":"Frame "+(index[0]+1)+" of "+frames.size());}catch(Exception e){dialog.dismiss();error(e.getMessage());}};image.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(r-l!=or-ol||b-t!=ob-ot)show.run();});show.run();
+        if(frames.size()>1){
+            LinearLayout controls=new LinearLayout(this);
+            Button cycle=button("Pause",()->{paused[0]=!paused[0];});
+            cycle.setOnClickListener(v->{paused[0]=!paused[0];cycle.setText(paused[0]?"Resume":"Pause");});
+            Button previous=button("Previous",()->{paused[0]=true;cycle.setText("Resume");index[0]=(index[0]+frames.size()-1)%frames.size();show.run();});
+            Button next=button("Next",()->{paused[0]=true;cycle.setText("Resume");index[0]=(index[0]+1)%frames.size();show.run();});
+            controls.addView(previous,new LinearLayout.LayoutParams(0,-2,1));controls.addView(cycle,new LinearLayout.LayoutParams(0,-2,1));controls.addView(next,new LinearLayout.LayoutParams(0,-2,1));view.addView(controls);
+        }
+        if(action!=null)view.addView(primary(actionName,()->{dialog.dismiss();action.run();}));view.addView(button(action==null?"Done":"Cancel",dialog::dismiss));
+        dialog.setContentView(view);transientDialog=dialog;android.view.Window window=dialog.getWindow();if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);window.addFlags(WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);WindowManager.LayoutParams attrs=window.getAttributes();attrs.screenBrightness=1f;window.setAttributes(attrs);}dialog.show();if(window!=null)window.setLayout(-1,-1);
+        if(frames.size()>1){Runnable cycle=new Runnable(){public void run(){if(!dialog.isShowing()||sessionLocked)return;if(!paused[0]){index[0]=(index[0]+1)%frames.size();show.run();}ui.postDelayed(this,2500);}};dialog.setOnDismissListener(d->ui.removeCallbacks(cycle));ui.postDelayed(cycle,2500);}
     }
-    private void showInlineQr(LinearLayout parent,String packet)throws Exception {BitMatrix matrix=new MultiFormatWriter().encode(packet,BarcodeFormat.QR_CODE,700,700);int[] pixels=new int[700*700];for(int y=0;y<700;y++)for(int x=0;x<700;x++)pixels[y*700+x]=matrix.get(x,y)?Color.BLACK:Color.WHITE;ImageView image=new ImageView(this);image.setImageBitmap(Bitmap.createBitmap(pixels,700,700,Bitmap.Config.ARGB_8888));image.setContentDescription("Public identity or encrypted invitation QR");image.setAdjustViewBounds(true);parent.addView(image,new LinearLayout.LayoutParams(-1,dp(285)));}
-    private EditText passwordEditor(String hint){EditText edit=editor(hint,false);edit.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);limit(edit,128);return edit;}
+    static Bitmap qrBitmap(String packet)throws Exception {
+        return qrBitmap(packet,960);
+    }
+    static Bitmap qrBitmap(String packet,int side)throws Exception {
+        // Encode at the measured display size so modules remain whole pixels.
+        Map<EncodeHintType,Object> hints=new EnumMap<>(EncodeHintType.class);hints.put(EncodeHintType.MARGIN,6);hints.put(EncodeHintType.ERROR_CORRECTION,com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M);BitMatrix matrix=new MultiFormatWriter().encode(packet,BarcodeFormat.QR_CODE,side,side,hints);int width=matrix.getWidth();int[] pixels=new int[width*width];for(int y=0;y<width;y++)for(int x=0;x<width;x++)pixels[y*width+x]=matrix.get(x,y)?Color.BLACK:Color.WHITE;return Bitmap.createBitmap(pixels,width,width,Bitmap.Config.ARGB_8888);
+    }
+    private EditText passwordEditor(String hint){EditText edit=editor(hint,false);edit.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD|InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);edit.setTypeface(android.graphics.Typeface.DEFAULT);limit(edit,128);return edit;}
+    private View passwordField(EditText edit){
+        LinearLayout field=column();field.addView(edit);CheckBox reveal=new CheckBox(this);reveal.setText("Show "+edit.getHint().toString().toLowerCase(Locale.ROOT));reveal.setTextColor(MUTED);reveal.setOnCheckedChangeListener((v,shown)->{int cursor=edit.getSelectionStart();edit.setTransformationMethod(shown?null:android.text.method.PasswordTransformationMethod.getInstance());edit.setSelection(Math.max(0,Math.min(cursor,edit.length())));});field.addView(reveal);return field;
+    }
     private void lockScreen(){
-        if(isDestroyed())return;body.removeAllViews();nav.removeAllViews();recipientActions.clear();output=null;message=null;progress.setText("LOCKED · YOUR LOCAL DATA IS ENCRYPTED");
-        boolean create=!passwordLock.configured();title(create?"Protect Enigma":"Unlock Enigma");note(create?"Choose a passphrase of at least 12 characters. It protects your groups, group secrets and encrypted history. Use several random words. There is no password recovery.":"Enter your app passphrase to unlock groups and history.");
-        EditText password=passwordEditor(create?"New passphrase":"App passphrase");body.addView(password);EditText confirm=create?passwordEditor("Repeat passphrase"):null;if(confirm!=null)body.addView(confirm);
+        if(isDestroyed())return;body.removeAllViews();nav.removeAllViews();recipientActions.clear();output=null;message=null;progress.setVisibility(View.GONE);
+        boolean create=!passwordLock.configured();title(create?"Protect Enigma":"Unlock Enigma");note(create?"Use at least 12 characters. There is no password recovery.":"Enter your app passphrase to unlock groups and history.");
+        EditText password=passwordEditor(create?"New passphrase":"App passphrase");body.addView(passwordField(password));EditText confirm=create?passwordEditor("Repeat passphrase"):null;if(confirm!=null)body.addView(passwordField(confirm));
         body.addView(primary(create?"Protect my app":"Unlock",()->{
             char[] chars=password.getText().toString().toCharArray();if(create && (chars.length<12 || !password.getText().toString().equals(confirm.getText().toString()))){Arrays.fill(chars,'\0');password.setError("Use 12–128 characters and matching passphrases");return;}
             long wait=getPreferences(MODE_PRIVATE).getLong("retryAfter",0)-System.currentTimeMillis();if(wait>0){Arrays.fill(chars,'\0');error("Try again in "+((wait+999)/1000)+" seconds");return;}password.setText("");if(confirm!=null)confirm.setText("");
             unlockWork(()->{byte[] key=null;try{key=create?passwordLock.create(chars):passwordLock.unlock(chars);Vault opened=new Vault(this,key);cleanupCache();cleanupHistory(opened);opened.save();getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();return opened;}catch(Exception e){if(!create){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();}throw new SecurityException(create?"Could not protect the vault. Your existing data was retained.":"Could not unlock. Check your passphrase; damaged data or missing device keys also prevent unlocking.",e);}finally{Arrays.fill(chars,'\0');if(key!=null)Arrays.fill(key,(byte)0);}},this::openedVault);
         }));
-        if(!create && Build.VERSION.SDK_INT>=28 && passwordLock.biometricConfigured())body.addView(button("Unlock with biometrics",()->biometric(false)));
+        if(!create && passwordLock.biometricConfigured())body.addView(button("Unlock with biometrics",()->biometric(false)));
         note("Forgotten passphrase? There is no bypass. Android Settings can clear this app's data to start over; that permanently loses local keys and data.");
     }
     private void openedVault(Vault opened)throws Exception{
@@ -485,26 +492,38 @@ public final class MainActivity extends ComponentActivity {
         if(waitingQr!=null){String qr=waitingQr;waitingQr=null;scanned(qr);}
     }
     private void lockNow(){
-        session++;sessionLocked=true;handoff=false;if(vault==null){if(transientDialog!=null)transientDialog.dismiss();setEnabled(root,true);lockScreen();return;}Vault previous=vault;restoredGroup=selected==null?null:selected.id;vault=null;selected=null;recipientId=null;qrTransfer=null;
+        session++;sessionLocked=true;handoff=false;biometricAttempt++;if(biometricPrompt!=null){biometricPrompt.cancelAuthentication();biometricPrompt=null;}if(vault==null){if(transientDialog!=null)transientDialog.dismiss();setEnabled(root,true);lockScreen();return;}Vault previous=vault;restoredGroup=selected==null?null:selected.id;vault=null;selected=null;recipientId=null;
         if(transientDialog!=null)transientDialog.dismiss();transientDialog=null;if(message!=null)message.setText("");clearResult();FileProtocol.Verified old=verifiedFile;verifiedFile=null;encryptedFile=null;
         worker.execute(()->{if(old!=null)old.close();previous.close();});if(!isDestroyed()){setEnabled(root,true);lockScreen();}
     }
-    private void beginHandoff(){handoff=true;handoffUntil=SystemClock.elapsedRealtime()+120000;int generation=session;ui.postDelayed(()->{if(handoff && generation==session && SystemClock.elapsedRealtime()>=handoffUntil)lockNow();},120100);}
+    private void beginHandoff(){beginHandoff(120000);}
+    private void beginHandoff(long duration){handoff=true;handoffUntil=SystemClock.elapsedRealtime()+duration;int generation=session;ui.postDelayed(()->{if(handoff && generation==session && SystemClock.elapsedRealtime()>=handoffUntil)lockNow();},duration+100);}
     private void returnedFromHandoff(){if(handoff && SystemClock.elapsedRealtime()>handoffUntil)lockNow();handoff=false;}
     private void reauth(String title,Runnable after){
         if(vault==null)return;long delay=getPreferences(MODE_PRIVATE).getLong("retryAfter",0)-System.currentTimeMillis();if(delay>0){error("Try again in "+((delay+999)/1000)+" seconds");return;}EditText pass=passwordEditor("App passphrase");int generation=session;
-        transientDialog=new AlertDialog.Builder(this).setTitle(title).setView(pass).setNegativeButton("Cancel",null).setPositiveButton("Unlock",(d,w)->{char[] chars=pass.getText().toString().toCharArray();pass.setText("");work(()->{byte[] key=null;try{key=passwordLock.unlock(chars);getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();return true;}catch(Exception e){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();throw new SecurityException("Incorrect passphrase or unavailable device key");}finally{Arrays.fill(chars,'\0');if(key!=null)Arrays.fill(key,(byte)0);}},ok->{if(generation==session && !sessionLocked)after.run();});}).show();
+        transientDialog=new AlertDialog.Builder(this).setTitle(title).setView(passwordField(pass)).setNegativeButton("Cancel",null).setPositiveButton("Unlock",(d,w)->{char[] chars=pass.getText().toString().toCharArray();pass.setText("");work(()->{byte[] key=null;try{key=passwordLock.unlock(chars);getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();return true;}catch(Exception e){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();throw new SecurityException("Incorrect passphrase or unavailable device key");}finally{Arrays.fill(chars,'\0');if(key!=null)Arrays.fill(key,(byte)0);}},ok->{if(generation==session && !sessionLocked)after.run();});}).show();
     }
     private void changePassword(){reauth("Confirm current passphrase",()->{
-        LinearLayout view=column();EditText next=passwordEditor("New passphrase"),again=passwordEditor("Repeat new passphrase");view.addView(next);view.addView(again);
+        LinearLayout view=column();EditText next=passwordEditor("New passphrase"),again=passwordEditor("Repeat new passphrase");view.addView(passwordField(next));view.addView(passwordField(again));
         transientDialog=new AlertDialog.Builder(this).setTitle("Change app passphrase").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Change",(d,w)->{char[] chars=next.getText().toString().toCharArray();boolean same=next.getText().toString().equals(again.getText().toString());next.setText("");again.setText("");if(chars.length<12 || !same){Arrays.fill(chars,'\0');error("Use matching passphrases of 12–128 characters");return;}work(()->{byte[] key=vault.copyMaster();try{passwordLock.replace(chars,key);return true;}finally{Arrays.fill(chars,'\0');Arrays.fill(key,(byte)0);}},ok->{render();Toast.makeText(this,"Passphrase changed; biometric unlock disabled",Toast.LENGTH_LONG).show();});}).show();
     });}
-    @android.annotation.TargetApi(28) private void biometric(boolean enable){
-        if(Build.VERSION.SDK_INT<28)return;final int generation=session;
-        try{javax.crypto.Cipher cipher=enable?passwordLock.enableBiometricCipher():passwordLock.biometricUnlockCipher();
-            android.hardware.biometrics.BiometricPrompt.Builder builder=new android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(enable?"Enable biometric unlock":"Unlock Enigma").setDescription(enable?"Biometrics will be an alternate way to unlock your encrypted vault. Changes to enrolled biometrics may disable this option.":"Authenticate to unlock your local encrypted vault.").setNegativeButton("Use passphrase",getMainExecutor(),(d,w)->{});if(Build.VERSION.SDK_INT>=30)builder.setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG);android.hardware.biometrics.BiometricPrompt prompt=builder.build();
-            prompt.authenticate(new android.hardware.biometrics.BiometricPrompt.CryptoObject(cipher),new CancellationSignal(),getMainExecutor(),new android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){@Override public void onAuthenticationSucceeded(android.hardware.biometrics.BiometricPrompt.AuthenticationResult result){if(generation!=session)return;runWork(()->{byte[] key=enable?vault.copyMaster():passwordLock.finishBiometricUnlock(result.getCryptoObject().getCipher());try{if(enable){passwordLock.finishBiometricEnable(result.getCryptoObject().getCipher(),key);return null;}return new Vault(MainActivity.this,key);}finally{Arrays.fill(key,(byte)0);}},v->{if(enable){render();Toast.makeText(MainActivity.this,"Biometric unlock enabled",Toast.LENGTH_LONG).show();}else openedVault(v);},!enable);}@Override public void onAuthenticationError(int code,CharSequence reason){if(code!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED && code!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_CANCELED)error(reason.toString());}});
-        }catch(Exception e){error("Biometric unlock is unavailable. Use your app passphrase; enrolled biometrics may have changed.");}
+    private void biometric(boolean enable){
+        if(busy)return;
+        int available=BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG);
+        if(available!=BiometricManager.BIOMETRIC_SUCCESS){error(available==BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED?"Add a fingerprint in Android Settings first, then try again.":"Strong biometrics are unavailable right now. Use your app passphrase.");return;}
+        final int generation=session,attempt=++biometricAttempt;
+        try{
+            javax.crypto.Cipher cipher=enable?passwordLock.enableBiometricCipher():passwordLock.biometricUnlockCipher();
+            biometricPrompt=new BiometricPrompt(this,ContextCompat.getMainExecutor(this),new BiometricPrompt.AuthenticationCallback(){
+                @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result){
+                    if(generation!=session||attempt!=biometricAttempt||result.getCryptoObject()==null)return;biometricPrompt=null;
+                    runWork(()->{byte[] key=enable?vault.copyMaster():passwordLock.finishBiometricUnlock(result.getCryptoObject().getCipher());try{if(enable){passwordLock.finishBiometricEnable(result.getCryptoObject().getCipher(),key);return null;}Vault opened=new Vault(MainActivity.this,key);cleanupCache();cleanupHistory(opened);opened.save();return opened;}finally{Arrays.fill(key,(byte)0);}},v->{if(enable){render();Toast.makeText(MainActivity.this,"Biometric unlock enabled",Toast.LENGTH_LONG).show();}else openedVault(v);},!enable);
+                }
+                @Override public void onAuthenticationError(int code,CharSequence reason){if(attempt!=biometricAttempt)return;biometricPrompt=null;if(code!=BiometricPrompt.ERROR_USER_CANCELED&&code!=BiometricPrompt.ERROR_CANCELED&&code!=BiometricPrompt.ERROR_NEGATIVE_BUTTON)error(reason.toString());}
+            });
+            BiometricPrompt.PromptInfo info=new BiometricPrompt.PromptInfo.Builder().setTitle(enable?"Enable biometric unlock":"Unlock Enigma").setSubtitle("Use your enrolled fingerprint").setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use passphrase").build();
+            biometricPrompt.authenticate(info,new BiometricPrompt.CryptoObject(cipher));
+        }catch(Exception e){error("Biometric key unavailable. Unlock with your passphrase, then disable and enable biometric unlock again.");}
     }
     private void persist()throws Exception {if(sessionLocked||vault==null)throw new SecurityException("Enigma locked; action cancelled");try{vault.save();}catch(Exception e){broken=true;throw new SecurityException("Could not save securely. Close and reopen the app before continuing.",e);}}
     private <T> void work(Job<T> job,Success<T> success){runWork(job,success,false);}
@@ -512,8 +531,8 @@ public final class MainActivity extends ComponentActivity {
     private <T> void runWork(Job<T> job,Success<T> success,boolean unlocking) {
         if(sessionLocked && !unlocking){error("Unlock Enigma first");return;}
         if(busy || broken){if(broken)error("Close and reopen the app to reload its secure vault.");return;}
-        final int generation=session;busy=true;setEnabled(root,false);progress.setText("Securing your data…");
-        worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()||generation!=session){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setText("ON-DEVICE KEYS  /  AUTHENTICATED ENCRYPTION");try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed()||generation!=session)return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(e instanceof EOFException?"Incomplete encrypted message or file":e.getMessage());});}});
+        final int generation=session;busy=true;setEnabled(root,false);progress.setText("Working…");progress.setVisibility(View.VISIBLE);
+        worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()||generation!=session){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setVisibility(View.GONE);try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed()||generation!=session)return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(e instanceof EOFException?"Incomplete encrypted message or file":e.getMessage());});}});
     }
     private void discardResult(Object result){if(result instanceof Protocol.Group)Arrays.fill(((Protocol.Group)result).seed,(byte)0);else if(result instanceof Object[])for(Object item:(Object[])result)discardResult(item);else if(result instanceof AutoCloseable)try{((AutoCloseable)result).close();}catch(Exception ignored){}else if(result instanceof File)((File)result).delete();}
     private void setEnabled(View view,boolean enabled){view.setEnabled(enabled);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)setEnabled(group.getChildAt(i),enabled);}}

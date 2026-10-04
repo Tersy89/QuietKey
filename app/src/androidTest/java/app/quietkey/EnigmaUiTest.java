@@ -28,7 +28,8 @@ public final class EnigmaUiTest {
     private static Vault openVault(Context context)throws Exception {byte[] key=new PasswordLock(context).unlock(PASS.toCharArray());try{return new Vault(context,key);}finally{Arrays.fill(key,(byte)0);}}
     private void editors(View v,List<EditText> result){if(v instanceof EditText)result.add((EditText)v);if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)editors(((ViewGroup)v).getChildAt(i),result);}
     private void unlock(ActivityScenario<MainActivity> scenario)throws Exception{waitFor(scenario,"Unlock Enigma");scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(scenario,"Unlock");waitFor(scenario,"Home");}
-    private void authenticateDialog()throws Exception{Thread.sleep(200);AccessibilityNodeInfo edit=node(InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow(),"",true);assertNotNull("Authentication password",edit);Bundle args=new Bundle();args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,PASS);assertTrue(edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args));assertTrue(systemClick("Unlock"));Thread.sleep(1200);}
+    private void authenticateDialog(ActivityScenario<MainActivity> scenario)throws Exception{scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("transientDialog");field.setAccessible(true);android.app.AlertDialog dialog=(android.app.AlertDialog)field.get(a);EditText pass=editor(dialog.getWindow().getDecorView());assertNotNull("Passphrase dialog is showing: "+dialog.isShowing(),pass);pass.setText(PASS);assertEquals("Unlock",dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).getText().toString());dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();}catch(ReflectiveOperationException e){throw new AssertionError(e);}});Thread.sleep(1200);}
+    private void authenticateDialog()throws Exception{AccessibilityNodeInfo edit=null;long until=System.currentTimeMillis()+5000;while(edit==null&&System.currentTimeMillis()<until){edit=node(InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow(),"",true);if(edit==null)Thread.sleep(200);}assertNotNull("Authentication password",edit);Bundle args=new Bundle();args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,PASS);assertTrue(edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args));assertTrue(systemClick("Unlock"));Thread.sleep(1200);}
 
     private TextView find(View view,String text) {
         if(view instanceof TextView && ((TextView)view).getText().toString().equals(text))return (TextView)view;
@@ -121,13 +122,13 @@ public final class EnigmaUiTest {
         String pkg=InstrumentationRegistry.getInstrumentation().getTargetContext().getPackageName();
         InstrumentationRegistry.getInstrumentation().getUiAutomation().grantRuntimePermission(pkg,Manifest.permission.CAMERA);
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)) {
-            waitFor(scenario,"Protect Enigma");preview(scenario,"password");scenario.onActivity(a->{List<EditText> fields=new ArrayList<>();editors(a.getWindow().getDecorView(),fields);for(EditText f:fields)f.setText(PASS);});click(scenario,"Protect my app");waitFor(scenario,"Set up your device");preview(scenario,"setup");
+            waitFor(scenario,"Protect Enigma");preview(scenario,"password");scenario.onActivity(a->{List<EditText> fields=new ArrayList<>();editors(a.getWindow().getDecorView(),fields);for(EditText f:fields)f.setText(PASS);TextView reveal=find(a.getWindow().getDecorView(),"Show new passphrase");assertNotNull(reveal);reveal.performClick();assertNull(fields.get(0).getTransformationMethod());assertEquals(PASS,fields.get(0).getText().toString());reveal.performClick();assertNotNull(fields.get(0).getTransformationMethod());});click(scenario,"Protect my app");waitFor(scenario,"Set up your device");preview(scenario,"setup");
             scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText("Emulator test"));
-            click(scenario,"Set up with live camera");waitFor(scenario,"Ready when you are.");
+            click(scenario,"Set up with live camera");waitFor(scenario,"Send privately");
             scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Write a message").isEnabled());assertFalse(find(a.getWindow().getDecorView(),"Send a file or image").isEnabled());});
             // A genuine second RSA identity is registered only in this disposable emulator vault.
             Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();Vault paired=openVault(target);KeyPairGenerator generator=KeyPairGenerator.getInstance("RSA");generator.initialize(2048);KeyPair friend=generator.generateKeyPair();String friendId=Protocol.fingerprint(friend.getPublic());
-            paired.groups.get(0).members.put(friendId,Protocol.b64(friend.getPublic().getEncoded()));paired.groups.get(0).memberNames.put(friendId,"Test recipient");PairingProtocol.signRoster(paired.groups.get(0),paired.publicKey(),paired.privateKey());paired.save();scenario.recreate();unlock(scenario);waitFor(scenario,"Ready when you are.");
+            paired.groups.get(0).members.put(friendId,Protocol.b64(friend.getPublic().getEncoded()));paired.groups.get(0).memberNames.put(friendId,"Test recipient");PairingProtocol.signRoster(paired.groups.get(0),paired.publicKey(),paired.privateKey());paired.save();scenario.recreate();unlock(scenario);waitFor(scenario,"Send privately");
             scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Write a message").isEnabled());List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(1).setSelection(1);});Thread.sleep(200);preview(scenario,"home");
             click(scenario,"Write a message");waitFor(scenario,"MESSAGE EXPIRY (TTL)");preview(scenario,"compose");
             scenario.onActivity(a->{List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(2).setSelection(1);editor(a.getWindow().getDecorView()).setText("Unified history test");});Thread.sleep(100);
@@ -142,30 +143,30 @@ public final class EnigmaUiTest {
             waitFor(scenario,"Unlock Enigma");unlock(scenario);scenario.onActivity(a->{assertEquals("",editor(a.getWindow().getDecorView()).getText().toString());List<Spinner> picks=new ArrayList<>();spinners(a.getWindow().getDecorView(),picks);picks.get(1).setSelection(1);});Thread.sleep(100);
             click(scenario,"Attach a file or image");waitFor(scenario,"Message attachment");preview(scenario,"files");
             filesThroughSystemPicker(scenario);
-            click(scenario,"Groups");waitFor(scenario,"Trusted groups");preview(scenario,"groups");
-            click(scenario,"Manage members (2)");waitFor(scenario,"Starter group members");
+            click(scenario,"Groups");waitFor(scenario,"Groups");preview(scenario,"groups");
+            click(scenario,"Starter group");click(scenario,"Manage members (2)");waitFor(scenario,"Starter group members");
             click(scenario,"Device");waitFor(scenario,"About me & my device");preview(scenario,"device");
             click(scenario,"How to use Enigma");assertTrue(systemClick("Got it"));
             click(scenario,"Reset app & delete local data");authenticateDialog();assertTrue(systemClick("Delete local app data"));assertTrue("Empty reset confirmation must preserve the app",systemClick("Keep my data"));
             Vault persisted=openVault(InstrumentationRegistry.getInstrumentation().getTargetContext());assertTrue(persisted.setupCompleted);assertEquals("Emulator test",persisted.deviceName);assertTrue(persisted.setupCapturedAt>0);assertNotNull(persisted.personalGroupId);
             assertEquals(2,persisted.history.size());assertEquals("text",persisted.history.get(0).kind);assertEquals("file",persisted.history.get(1).kind);assertEquals(300000,persisted.history.get(1).expiresAt-persisted.history.get(1).createdAt);
             click(scenario,"Messages");waitFor(scenario,"ALL MESSAGES · TEXT & FILES");preview(scenario,"history");
-            click(scenario,"Device");click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");preview(scenario,"locked");assertThrows(SecurityException.class,()->new Vault(target));unlock(scenario);
-            click(scenario,"Groups");
-            click(scenario,"Invite new recipient");Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Trusted groups");
+            click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");preview(scenario,"locked");assertThrows(SecurityException.class,()->new Vault(target));unlock(scenario);
+            click(scenario,"Groups");click(scenario,"Starter group");
+            click(scenario,"Invite new recipient");Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
             scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("handoff");field.setAccessible(true);assertFalse("Cancelled scanner must end the handoff allowance",field.getBoolean(a));}catch(Exception e){throw new AssertionError(e);}});
             KeyPair newcomer=generator.generateKeyPair();String newRequest=PairingProtocol.request(newcomer.getPublic(),newcomer.getPrivate(),"New recipient");String starterId=persisted.groups.get(0).id;
             scenario.onActivity(a->{try{java.lang.reflect.Field action=MainActivity.class.getDeclaredField("scanAction"),groupId=MainActivity.class.getDeclaredField("scanGroupId");action.setAccessible(true);groupId.setAccessible(true);action.set(a,"invite");groupId.set(a,starterId);java.lang.reflect.Method scanned=MainActivity.class.getDeclaredMethod("scanned",String.class);scanned.setAccessible(true);scanned.invoke(a,newRequest);}catch(Exception e){throw new AssertionError(e);}});
             assertTrue("Owner approves recipient",systemClick("Invite"));assertTrue("Encrypted invitation shown",systemClick("Done"));
             try(Vault invited=openVault(target)){String newId=Protocol.fingerprint(newcomer.getPublic());assertEquals("Invited",invited.groups.get(0).memberStatus.get(newId));assertEquals(newId,invited.pendingInvites.get(PairingProtocol.parseRequest(newRequest).id));assertEquals(3,invited.groups.get(0).members.size());}
-            click(scenario,"Join group");assertTrue(systemClick("Scan owner's invitation"));Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Trusted groups");
+            click(scenario,"Back to groups");click(scenario,"Join group");assertTrue(systemClick("Scan owner's invitation"));Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
             // Exercise the real joining commit/UI with a software owner and this device's Keystore key.
             Vault requesting=openVault(target);String request=requesting.joiningRequest;
             KeyPair owner=generator.generateKeyPair(),existing=generator.generateKeyPair();Protocol.Group remote=Protocol.create("Joined group",Protocol.random(32),owner.getPublic());
             String existingId=Protocol.fingerprint(existing.getPublic());remote.members.put(existingId,Protocol.b64(existing.getPublic().getEncoded()));remote.memberNames.put(existingId,"Existing member");
             String invitation=PairingProtocol.invite(remote,PairingProtocol.parseRequest(request),owner.getPublic(),owner.getPrivate());requesting.close();
             scenario.onActivity(a->{try{java.lang.reflect.Method method=MainActivity.class.getDeclaredMethod("join",String.class);method.setAccessible(true);method.invoke(a,invitation);}catch(Exception e){throw new AssertionError(e);}});
-            assertTrue("Joined confirmation",systemClick("Done"));waitFor(scenario,"Trusted groups");
+            assertTrue("Joined confirmation",systemClick("Done"));waitFor(scenario,"Groups");
             try(Vault joined=openVault(target)){assertEquals(2,joined.groups.size());Protocol.Group imported=joined.groups.stream().filter(g->g.id.equals(remote.id)).findFirst().orElseThrow(AssertionError::new);assertEquals(remote.members,imported.members);assertArrayEquals(remote.seed,imported.seed);assertEquals(2,joined.history.size());assertEquals("",joined.joiningRequest);assertTrue(joined.pairingUsed.contains(PairingProtocol.parseRequest(request).id));}
             preview(scenario,"joined");
 
@@ -178,4 +179,20 @@ public final class EnigmaUiTest {
             }
         }
     }
+    @Test public void biometricEnableCancelAndUnlock()throws Exception {
+        Assume.assumeTrue("true".equals(InstrumentationRegistry.getArguments().getString("enigmaBiometricTest")));
+        Assume.assumeTrue(Build.FINGERPRINT.contains("generic")||Build.MODEL.contains("sdk_gphone"));
+        Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();assertEquals(androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS,androidx.biometric.BiometricManager.from(target).canAuthenticate(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG));
+        PasswordLock lock=new PasswordLock(target);lock.disableBiometric();
+        try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
+            unlock(scenario);click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Enable biometric unlock");authenticateDialog(scenario);
+            Bundle stage=new Bundle();stage.putString("stream","BIO_ENABLE_READY\n");InstrumentationRegistry.getInstrumentation().sendStatus(2,stage);
+            // Host responds to each READY stage with adb emu finger touch 1.
+            waitFor(scenario,"Disable biometric unlock");assertTrue(lock.biometricConfigured());
+            click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");click(scenario,"Unlock with biometrics");assertTrue(systemClick("Use passphrase"));waitFor(scenario,"Unlock Enigma");assertThrows(SecurityException.class,()->new Vault(target));
+            click(scenario,"Unlock with biometrics");stage=new Bundle();stage.putString("stream","BIO_UNLOCK_READY\n");InstrumentationRegistry.getInstrumentation().sendStatus(2,stage);waitFor(scenario,"Home");
+            click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Disable biometric unlock");authenticateDialog(scenario);waitFor(scenario,"Enable biometric unlock");assertFalse(lock.biometricConfigured());
+        }
+    }
+
 }

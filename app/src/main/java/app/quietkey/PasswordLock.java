@@ -37,15 +37,15 @@ public final class PasswordLock {
     public boolean biometricConfigured(){return new File(context.getFilesDir(),"biometric.qkb").exists();}
     public Cipher enableBiometricCipher()throws Exception{
         KeyStore ks=store();if(ks.containsAlias(BIO))ks.deleteEntry(BIO);
-        KeyGenerator generator=KeyGenerator.getInstance("AES","AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder(BIO,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setKeySize(256).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setUserAuthenticationRequired(true).setInvalidatedByBiometricEnrollment(true).build());generator.generateKey();
-        Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,(SecretKey)store().getKey(BIO,null));c.updateAAD("Enigma/biometric/v1".getBytes(StandardCharsets.UTF_8));return c;
+        KeyGenerator generator=KeyGenerator.getInstance("AES","AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder(BIO,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setKeySize(256).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setUserAuthenticationRequired(true).setUserAuthenticationValidityDurationSeconds(-1).setInvalidatedByBiometricEnrollment(true).build());generator.generateKey();
+        Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,(SecretKey)store().getKey(BIO,null));return c;
     }
     public void finishBiometricEnable(Cipher c,byte[] master)throws Exception{
-        byte[] cipher=c.doFinal(master);AtomicFile bio=new AtomicFile(new File(context.getFilesDir(),"biometric.qkb"));FileOutputStream out=null;try{out=bio.startWrite();out.write(Packets.pack(o->{Packets.blob(o,c.getIV());Packets.blob(o,cipher);}));out.getFD().sync();bio.finishWrite(out);}catch(Exception e){if(out!=null)bio.failWrite(out);throw e;}
+        c.updateAAD("Enigma/biometric/v1".getBytes(StandardCharsets.UTF_8));byte[] cipher=c.doFinal(master);AtomicFile bio=new AtomicFile(new File(context.getFilesDir(),"biometric.qkb"));FileOutputStream out=null;try{out=bio.startWrite();out.write(Packets.pack(o->{Packets.blob(o,c.getIV());Packets.blob(o,cipher);}));out.getFD().sync();bio.finishWrite(out);}catch(Exception e){if(out!=null)bio.failWrite(out);throw e;}
     }
     public Cipher biometricUnlockCipher()throws Exception{
-        DataInputStream in=Packets.input(new AtomicFile(new File(context.getFilesDir(),"biometric.qkb")).readFully());byte[] nonce=Packets.blob(in,12);Packets.blob(in,48);Packets.end(in);if(nonce.length!=12)throw new SecurityException("Invalid biometric nonce");Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,(SecretKey)store().getKey(BIO,null),new GCMParameterSpec(128,nonce));c.updateAAD("Enigma/biometric/v1".getBytes(StandardCharsets.UTF_8));return c;
+        DataInputStream in=Packets.input(new AtomicFile(new File(context.getFilesDir(),"biometric.qkb")).readFully());byte[] nonce=Packets.blob(in,12);Packets.blob(in,48);Packets.end(in);if(nonce.length!=12)throw new SecurityException("Invalid biometric nonce");Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,(SecretKey)store().getKey(BIO,null),new GCMParameterSpec(128,nonce));return c;
     }
-    public byte[] finishBiometricUnlock(Cipher c)throws Exception{DataInputStream in=Packets.input(new AtomicFile(new File(context.getFilesDir(),"biometric.qkb")).readFully());Packets.blob(in,12);byte[] cipher=Packets.blob(in,48);Packets.end(in);return c.doFinal(cipher);}
+    public byte[] finishBiometricUnlock(Cipher c)throws Exception{DataInputStream in=Packets.input(new AtomicFile(new File(context.getFilesDir(),"biometric.qkb")).readFully());Packets.blob(in,12);byte[] cipher=Packets.blob(in,48);Packets.end(in);c.updateAAD("Enigma/biometric/v1".getBytes(StandardCharsets.UTF_8));return c.doFinal(cipher);}
     public void disableBiometric()throws Exception{new AtomicFile(new File(context.getFilesDir(),"biometric.qkb")).delete();KeyStore ks=store();if(ks.containsAlias(BIO))ks.deleteEntry(BIO);}
 }

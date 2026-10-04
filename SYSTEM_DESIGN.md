@@ -1,6 +1,6 @@
 # Enigma system design
 
-Version: 0.4 development build. Updated: 4 October 2026.
+Version: 0.4.1 development build. Updated: 4 October 2026.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
@@ -16,7 +16,7 @@ The group owner authenticates the member directory. Trusting that owner delegate
 
 | Component | Responsibility |
 |---|---|
-| MainActivity | Four-tab UI, locked/unlocked session, guided joining, encrypted history, external document/share workflows |
+| MainActivity (FragmentActivity) | Four-tab UI, locked/unlocked session, guided joining, encrypted history, external document/share workflows |
 | Vault | Atomic encrypted group/configuration/history storage; loaded secrets live only in an unlocked session |
 | PasswordLock / PasswordCipher | Device-bound, password-encrypted vault-key envelope; optional biometric envelope |
 | Protocol | Identity, group generation, crypto primitives and retained older formats |
@@ -46,18 +46,18 @@ flowchart LR
 - Vault master key: random 32 bytes. It encrypts vault format 2 with AES-256-GCM, fresh 12-byte nonce, 128-bit tag and AAD Enigma-vault-v2.
 - App passphrase: 12–128 characters. Argon2id v1.3 derives a 32-byte envelope key with 16 random salt bytes, 64 MiB memory, three iterations and four lanes. Bouncy Castle 1.86 provides the low-level implementation; its JCA provider is not installed globally.
 - Password envelope: AES-GCM protects the random master key. The device Keystore encrypts that complete envelope again. Fixed framing and bounded sizes prevent attacker-selected KDF resource inflation. Neither a UI success flag nor a stored password hash opens the vault.
-- Optional biometric key: separate Keystore AES key, requires biometric authentication for each cryptographic operation and invalidates on changed biometric enrollment where supported. It wraps the same master key through BiometricPrompt/CryptoObject. This is an explicitly authorized alternate unlocking route, not a second required factor. Password change disables this route.
+- Optional biometric key: separate Keystore AES key, requires biometric authentication for each cryptographic operation and invalidates on changed biometric enrollment where supported. It wraps the same master key through AndroidX BiometricPrompt/CryptoObject, requesting BIOMETRIC_STRONG on supported API26+ devices. GCM AAD is supplied after authentication, immediately before finalization. Cancellation/stale callbacks cannot open a session. This is an explicitly authorized alternate unlocking route, not a second required factor. Password change disables this route.
 - Group secret: independent 32 bytes per group, HKDF from fresh OS randomness with the live camera digest as additional salt input. OS randomness is the security foundation; camera input is not a measurable entropy guarantee. Group IDs are UUIDs.
 
 Keys/plaintext exist in process memory during use. Byte arrays are cleared where practical, but Java cannot guarantee complete erasure. The RSA identity and device password-box key are not themselves configured for per-operation user authentication; a compromised executing app can potentially use these Keystore keys. Password/biometric protection does not promise safety on a fully compromised unlocked endpoint.
 
 ## Locked-session workflow
 
-On first use the user chooses and repeats an app passphrase before device setup. Existing development data may be opened during the initial password setup and rewritten with the random master key. Legacy data compatibility is not a supported release commitment.
+On first use the user chooses and repeats an app passphrase before device setup. Password entry is hidden by default, with an explicit visibility toggle that preserves the cursor and typed value. Existing development data may be opened during the initial password setup and rewritten with the random master key. Legacy data compatibility is not a supported release commitment.
 
 Opening Enigma requires the passphrase or an explicitly enabled biometric route. Before successful decryption no groups, history or group secrets are loaded. Wrong-password attempts incur a persistent increasing UI delay capped at 60 seconds; this is not protection against offline guessing or a modified/rooted client. Argon2 is the computational barrier for copied password envelopes.
 
-Leaving Enigma locks it, clears the visible data and queues disposal of loaded secrets. Screen-off always locks. Its camera/scanners and Android document pickers receive a controlled session allowance of at most two minutes; they are not general background-unlock permission. A generation counter rejects asynchronous results from an obsolete session. Streaming exports check the session while writing and request deletion of failed/partial destinations. External storage providers may retain copies or fail deletion.
+Leaving Enigma locks it, clears the visible data and queues disposal of loaded secrets. Screen-off always locks. Camera setup and Android document pickers receive a controlled session allowance of at most two minutes; QR scanning allows five minutes so the largest 64-frame transfer can complete at 2.5 seconds per frame. Screen-off still locks immediately; they are not general background-unlock permission. A generation counter rejects asynchronous results from an obsolete session. Streaming exports check the session while writing and request deletion of failed/partial destinations. External storage providers may retain copies or fail deletion.
 
 Fresh passphrase authentication is required before readable-file export, reset, password change and biometric configuration. Biometric unlock does not replace the passphrase for these actions. There is no password recovery. Android Settings can clear data for a fresh start, losing the local identity/data. No automatic wiping follows failed passwords.
 
@@ -82,7 +82,7 @@ sequenceDiagram
 4. B checks its active request, intended fingerprint, signature, lifetime, GCM authentication, owner-signed directory and membership before committing any trust. All public member keys import together. Duplicate group import refuses rather than replacing history/replay state. Consumed joining IDs are retained separately from groups, so deleting a group does not erase them.
 5. A says Invited until QKA1 signed confirmation or B's first verified private text reply is received. The optional confirmation cannot grant new membership; it refers to an already-approved pending request. Offline delivery is not inferred from QR display.
 
-For packets larger than a practical static QR, the owner cycles bounded QKF1 frames every 1.5 seconds. The joining scanner continuously collects unique frames in any order, checks the complete SHA-256 transfer digest, and returns only the complete encrypted packet for cryptographic verification. The digest is transfer integrity, not sender authentication; the owner signature and GCM provide that. No per-frame trust commit occurs. At most 25 frames / 30,000 characters / five minutes are accepted. Cancel or process loss requires restarting the scan. A group supports up to 30 devices.
+For packets over 600 characters, either device cycles bounded QKF1 frames with 480 payload characters every 2.5 seconds. Requests, invitations and confirmations use the same QR-only continuous scanner. Full-screen display uses black/white QR images encoded at the measured display size with whole-pixel modules (960 pixels before layout), error correction M, six-module quiet margins, temporary full brightness and pause/previous/next controls. The scanner uses a fitted SurfaceView camera preview and decoding across its full visible frame, continuous autofocus, normal/inverted decoding, a light toggle and visible collection progress. It collects unique frames in any order, checks the complete SHA-256 transfer digest, and returns only the complete encrypted packet for cryptographic verification. The digest is transfer integrity, not sender authentication; the owner signature and GCM provide that. No per-frame trust commit occurs. At most 64 frames / 30,000 characters / five minutes are accepted. Cancel or process loss requires restarting the scan. A group supports up to 30 devices.
 
 The member directory has an owner signature, group ID, owner key, group expiry, positive increasing revision, group name and distinct fingerprint-checked public keys/names. Updates are verified against the pinned owner key. Older signed directories can authenticate old packets without rolling back current membership; conflicting equal revisions are refused. Locally blocked recipients stay blocked after updates; explicit owner reinvitation clears that device's local block. New text and file headers carry an encrypted signed directory, so existing members learn additions automatically when packets arrive. Offline phones do not update until a packet reaches them.
 
@@ -105,9 +105,9 @@ Only explicit other group recipients may be selected; missing/self/unknown recip
 ## Storage and four tabs
 
 - Home: select group/recipient and launch sending.
-- Groups: create, join, invite, manage devices and local trust. Starter group replaces the misleading Personal vault label; it is not a separate personal file-storage feature.
+- Groups: create/join and a compact group list; each group opens details with Invite, member management, send, optional confirmation, rename and remove. Starter group replaces the misleading Personal vault label; it is not a separate personal file-storage feature.
 - Messages: combined encrypted prepared/received text/file history across groups. Prepared is not delivered/read.
-- Device: identity/setup, guide, version, manual lock, passphrase/biometric settings and reset.
+- Device: setup status/name, current version, updated guide, fingerprint, rename and reset. A separate Security & unlock page contains manual lock and passphrase/biometric settings.
 
 groups.qkv holds group seeds, signed directories/revisions, aliases/local blocks, replay logs, joining state and encrypted text/history metadata inside AES-GCM vault encryption. password.qkl holds the double-encrypted master-key envelope. Optional biometric.qkb holds a biometric-key-encrypted alternate master envelope. files/packages holds only signed endpoint/group-encrypted file packages with opaque UUID names.
 
@@ -131,6 +131,7 @@ Planned work: reviewed ratcheting/forward secrecy; separate signing/decryption i
 
 ## Change log
 
+- 0.4.1 / 4 October 2026: AndroidX cryptographic biometric prompt and post-authentication GCM handling; API26-compatible joining calls; unified continuous scanner with full preview/focus/light/progress; smaller full-screen cycling QR frames; visibility toggles for password entry; compact Home/Groups/Device and updated guide. Message cryptography and recipient requirements remain unchanged.
 - 0.4 / 4 October 2026: guided recipient-specific joining, signed directory transport, cycling QR collection, passphrase-encrypted local storage, optional biometric envelope, session locking/fresh authentication, corrected group/endpoint key derivation; living design and repository maintenance instructions added.
 - 0.3: four tabs, mandatory recipient selection, encrypted unified history, message TTL and reset.
 

@@ -36,11 +36,11 @@ public final class CameraActivity extends Activity {
             return insets;
         });
         ImageView icon=new ImageView(this);icon.setImageResource(R.drawable.ic_enigma);icon.setContentDescription("Enigma key setup");view.addView(icon,new LinearLayout.LayoutParams(-1,dp(130)));
-        TextView title=new TextView(this);title.setText("setup".equals(getIntent().getStringExtra("purpose"))?"Set up your personal vault":"Create your group secret");title.setTextColor(0xffedf5ff);title.setTextSize(27);view.addView(title);
+        TextView title=new TextView(this);title.setText("setup".equals(getIntent().getStringExtra("purpose"))?"Set up your device":"Create your group secret");title.setTextColor(0xffedf5ff);title.setTextSize(27);view.addView(title);
         status = new TextView(this); status.setTextColor(0xffedf5ff); status.setTextSize(20); view.addView(status);
         captureProgress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);captureProgress.setMax(100);view.addView(captureProgress,new LinearLayout.LayoutParams(-1,dp(26)));
         TextView tip = new TextView(this); tip.setTextColor(0xff4be3c1); tip.setTextSize(16); tip.setPadding(0,dp(24),0,dp(24));
-        tip.setText("Move the camera around for at least five seconds. We hash live frames and mix them with secure system randomness to create your vault or group secret. No video or audio is saved. Your separate device private key is protected by Android Keystore."); view.addView(tip);
+        tip.setText("Move the camera around for at least five seconds. We hash live frames and mix them with secure system randomness to create a group secret. No video or audio is saved. Your separate device private key is protected by Android Keystore."); view.addView(tip);
         Button cancel = new Button(this); cancel.setText("Cancel"); cancel.setOnClickListener(v -> finish()); view.addView(cancel); setContentView(view);
         status.setText("Preparing live camera…");
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.CAMERA},7); else start();

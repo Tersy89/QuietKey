@@ -15,7 +15,7 @@ public final class PairingProtocol {
         Request(PublicKey k,String n,String i,long c,long e){key=k;name=n;id=i;created=c;expires=e;}
     }
     public static String request(PublicKey key,PrivateKey privateKey,String name)throws Exception{
-        if(name.isBlank()||name.length()>40)throw new IllegalArgumentException("Name this device first");
+        if(name.trim().isEmpty()||name.length()>40)throw new IllegalArgumentException("Name this device first");
         long now=System.currentTimeMillis();byte[] id=Protocol.random(16);
         byte[] body=pack(o->{o.writeUTF("join-request-v1");blob(o,key.getEncoded());o.writeUTF(name);blob(o,id);o.writeLong(now);o.writeLong(now+WINDOW);});
         return "QKJ1:"+Protocol.b64(signed(body,privateKey));
@@ -24,7 +24,7 @@ public final class PairingProtocol {
         byte[] envelope=decode(wire,"QKJ1:",1600);DataInputStream out=input(envelope);byte[] body=blob(out,800);blob(out,256);end(out);
         DataInputStream in=input(body);if(!in.readUTF().equals("join-request-v1"))throw new SecurityException("Unsupported joining request");
         PublicKey key=Protocol.publicKey(Protocol.b64(blob(in,400)));String name=in.readUTF();byte[] id=blob(in,16);long created=in.readLong(),expires=in.readLong();end(in);
-        verified(envelope,key,800);if(name.isBlank()||name.length()>40||id.length!=16||expires-created!=WINDOW)throw new SecurityException("Invalid joining request");
+        verified(envelope,key,800);if(name.trim().isEmpty()||name.length()>40||id.length!=16||expires-created!=WINDOW)throw new SecurityException("Invalid joining request");
         Expiry.check(created,expires,expires);return new Request(key,name,Protocol.b64(id),created,expires);
     }
     public static void signRoster(Protocol.Group g,PublicKey owner,PrivateKey key)throws Exception{

@@ -2,26 +2,26 @@
 
 Offline Android encryption for a selected member of an owner-managed group. Android 8.0/API 26+. No account, server or Internet permission. The repository and APK distribution remain private.
 
-## Download 0.4
+## Download 0.4.1
 
 **[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Sign in, open the file and choose **Download raw**. Install it on both devices. It appears as **Enigma (test)**. This is an unaudited development prototype with no recovery; use disposable data while testing.
 
-The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Both people need **0.4** for the new joining flow, QKD3 text and file-v3 packages.
+The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both pairing devices to **0.4.1** for the smaller QR frames and unified scanner. QKD3 text and file-v3 remain the current message formats.
 
 ## Protect and set up your device
 
-1. Choose and repeat an app passphrase of 12–128 characters. Several random words are preferable. This cryptographically protects the local vault, including group secrets, groups and history. There is no forgotten-passphrase recovery.
+1. Choose and repeat an app passphrase of 12–128 characters. Use **Show passphrase** to check typing; it starts hidden each time. Several random words are preferable. This cryptographically protects the local vault, including group secrets, groups and history. There is no forgotten-passphrase recovery.
 2. Name the device and complete live camera setup: at least five seconds and 60 frames. Android Keystore generates the private RSA identity; camera input contributes additional input to group-secret generation. No video or audio is saved. The initial **Starter group** contains only this device.
-3. Device provides **Lock Enigma now**, passphrase change, and optional biometric unlock on supported Android 9+ devices. Biometrics are an alternate unlocking route, not an additional required factor. Changing the passphrase disables biometric unlock.
+3. **Device → Security & unlock** provides **Lock Enigma now**, passphrase change, and optional fingerprint unlock on supported Android 8+ devices with strong enrolled biometrics. Biometrics are an alternate unlocking route, not an additional required factor. Changing the passphrase disables biometric unlock. If an existing biometric setup fails after this update, unlock with your passphrase, then disable and enable biometric unlock again.
 
-The protected vault is the app's local storage, not a separate personal file-storage feature. Leaving the app locks it; screen-off always locks. Its camera/scanners and system file pickers have a controlled allowance of at most two minutes. Fresh passphrase entry is required before readable-file export, reset and security-setting changes.
+The protected vault is the app's local storage, not a separate personal file-storage feature. Leaving the app locks it; screen-off always locks. Camera setup and system file pickers have a controlled allowance of at most two minutes; the QR scanner allows at most five minutes to collect a large transfer. Screen-off still locks immediately. Fresh passphrase entry is required before readable-file export, reset and security-setting changes.
 
 ## Join a group with two QR transfers
 
 1. A creates a group in **Groups** and is its owner.
-2. B taps **Join group**. B's joining/request QR appears, carrying their public key and a fresh five-minute request.
-3. A taps **Invite new recipient**, scans directly from B's screen, checks the name/device and confirms **Invite**.
-4. A shows an invitation encrypted only for B. B taps **Scan owner's invitation** and keeps the camera pointed at A's screen until all frames are collected. Larger invitations cycle automatically.
+2. B taps **Join group**. B's joining/request QR appears, carrying their public key and a fresh five-minute request. It cycles through smaller frames automatically.
+3. A opens the group, taps **Invite new recipient**, keeps scanning B's screen until all frames are collected, checks the name/device and confirms **Invite**.
+4. A shows an invitation encrypted only for B. B taps **Scan owner's invitation** and keeps the camera pointed at A's screen until all frames are collected. The full-screen codes cycle every 2.5 seconds. **Pause**, **Previous** and **Next** help with difficult scans; **Light on** is available in the scanner. Keep the entire code visible and move back if needed.
 5. B joins with the group details, secret and all owner-approved public member keys imported together. Separate public-key trust scans are unnecessary. B can optionally show the signed joining confirmation to A; a verified text reply also confirms joining.
 
 Pair directly with the known owner's device. A photographed invitation cannot be used with C's private key, but QR signatures alone do not prove a person's real-world identity. Member names and full fingerprints remain visible. Invitations expire within five minutes even when messages use No expiry.
@@ -31,9 +31,9 @@ The owner repeats this for each new device, up to 30 per group. Existing members
 ## Four tabs and sending
 
 - **Home:** quickly select a group and explicitly select another verified recipient, then write a message or send a file/image. Sending stays disabled until a recipient is chosen.
-- **Groups:** create, join, invite, rename and manage members, aliases, fingerprints and local trust.
+- **Groups:** create/join and choose a group. Its details contain invitations, member management, renaming and removal.
 - **Messages:** prepared and received text/files together across groups. Explicitly open an entry to decrypt it. Prepared means encrypted locally, not delivered or read.
-- **Device:** setup/identity, app information, guide, app lock, security settings and full reset.
+- **Device:** device name, app version, updated how-to guide, fingerprint, **Security & unlock**, and full reset.
 
 Text and arbitrary files, including images/PDFs, are encrypted before Share/Copy/Save is offered. Choose the corresponding person in the external messenger. The sender can reopen their own copy. Missing, self or unregistered recipients are rejected by both UI and protocol.
 
