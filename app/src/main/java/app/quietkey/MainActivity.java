@@ -77,7 +77,7 @@ public final class MainActivity extends FragmentActivity {
             byte[] digest=result.getData().getByteArrayExtra("digest");
             returnedFromHandoff();if(vault==null){if(digest!=null)Arrays.fill(digest,(byte)0);error("Unlock and start camera capture again.");return;}captured(digest);
         });
-        joinScanner=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null){String packet=result.getData().getStringExtra("packet");if(vault==null)waitingQr=packet;else scanned(packet);}else if(vault!=null&&"join".equals(scanAction))startJoining();});
+        joinScanner=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null){if(result.getData().getBooleanExtra("paste",false)){if(vault!=null)pasteTransfer(scanAction,group(scanGroupId));}else{String packet=result.getData().getStringExtra("packet");if(vault==null)waitingQr=packet;else scanned(packet);}}else if(vault!=null&&"join".equals(scanAction))startJoining();});
         openFile=registerForActivityResult(new ActivityResultContracts.OpenDocument(),uri->{
             returnedFromHandoff();if(uri!=null){if(vault==null)error("Please choose the file again after initialization.");else pickedFile(uri);}
         });
@@ -210,14 +210,10 @@ public final class MainActivity extends FragmentActivity {
         scanAction=action;scanGroupId=g==null?null:g.id;
         beginHandoff(PairingProtocol.WINDOW);joinScanner.launch(new Intent(this,JoinScanActivity.class).putExtra("expected",action.equals("invite")?"QKJ1:":action.equals("receipt")?"QKA1:":"QKG2:"));
     }
-    private void inviteInstructions(Protocol.Group g){
-        transientDialog=new AlertDialog.Builder(this).setTitle("Invite into "+g.name)
-            .setMessage("Use one group on both phones. You are its owner.\n\n1. On the OTHER phone: Groups → Join group. It shows a joining QR.\n2. On THIS phone: scan that QR and confirm Invite. Your invitation then appears.\n3. The OTHER phone taps Scan owner's invitation and scans your screen. When the group appears there, joining is complete.\n\nIf scanning fails, use Copy transfer and paste it on the other phone. An unfinished invite can be continued in group details.")
-            .setPositiveButton("Scan joining QR",(d,w)->scan("invite",g)).setNeutralButton("Paste request",(d,w)->pasteTransfer("invite",g)).setNegativeButton("Cancel",null).show();
-    }
+    private void inviteInstructions(Protocol.Group g){scan("invite",g);}
     private void startJoining(){startJoining(false);}
     private void startJoining(boolean fresh){
-        work(()->{vault.joiningRequest=JoiningFlow.request(vault.publicKey(),vault.privateKey(),vault.deviceName,vault.joiningRequest,vault.pairingUsed,fresh);persist();return vault.joiningRequest;},request->showTransfer("Join group · step 1 of 2",request,"On the OWNER's phone: open the group → Invite new recipient → Scan joining QR. Show them this screen. Once THEIR invitation appears, tap Scan owner's invitation below. Start again makes a fresh QR if an earlier attempt was used or cancelled.","Scan owner's invitation",()->scan("join",null)));
+        work(()->{vault.joiningRequest=JoiningFlow.request(vault.publicKey(),vault.privateKey(),vault.deviceName,vault.joiningRequest,vault.pairingUsed,fresh);persist();return vault.joiningRequest;},request->showTransfer(request,()->scan("join",null)));
     }
     private void pasteTransfer(String action,Protocol.Group g){
         EditText packet=editor(action.equals("invite")?"Paste their copied joining request":"Paste the owner's copied invitation",true);limit(packet,32000);
@@ -426,7 +422,7 @@ public final class MainActivity extends FragmentActivity {
         String[][] sections={
             {"1. Protect and set up","Set an app passphrase (12+ characters). Tap Show passphrase to check it. Name your device, then complete five seconds of camera setup."},
             {"2. Create or join a group","Owner: Groups → Create a group, then open it and tap Invite new recipient. Joiner: Groups → Join group and show your QR to the owner."},
-            {"3. Finish joining","After the owner scans your QR and taps Invite, tap Scan owner's invitation. Keep the full QR in view while its frames change. Group details and member keys import together; no extra key scans are needed. The group appearing on the joining phone completes joining; do not invite the owner back. If scanning fails, Copy transfer and paste it on the other phone. Start again replaces a used request; the owner can Continue inviting from group details."},
+            {"3. Finish joining","Keep each QR still until the scanning phone says Code scanned. Tap Next code on the showing phone, then Scan next code on the scanning phone. After your request is scanned, tap Swap phones and Scan owner's invitation. Scan those codes the same way, then tap Join group. Group details and member keys import together. More contains Copy/Paste and Start again; the owner can Continue inviting after an interruption."},
             {"4. Send text or a file","Home → choose a group → choose a recipient → Write a message or Send a file or image. Select a TTL or leave No expiry. Share the encrypted result with that person in your messenger."},
             {"5. Read received messages","Messages → Open received text to paste a packet, or Receive an encrypted file. Local text and file history appears here. Saving a readable file requires your app passphrase; that saved copy is outside Enigma."},
             {"6. Unlock and reset","Device → Security & unlock enables fingerprint unlock or changes the passphrase. Backgrounding locks Enigma. Device → Reset app & delete local data requires the passphrase and typed RESET; it deletes local keys/groups/history. There is no recovery."}
@@ -463,28 +459,11 @@ public final class MainActivity extends FragmentActivity {
     private void closeVerified(){if(verifiedFile!=null){verifiedFile.close();verifiedFile=null;}}
     private String formatSize(long bytes){return bytes>=1048576?String.format(Locale.ROOT,"%.1f MB",bytes/1048576.0):String.format(Locale.ROOT,"%.1f KB",bytes/1024.0);}
     private void clearResult(){if(output!=null && output.getParent() instanceof View)body.removeView((View)output.getParent());output=null;}
-    private void qrDialog(String title,String packet,String caption)throws Exception {showTransfer(title,packet,caption,null,null);}
-    private void showTransfer(String title,String packet,String caption,String actionName,Runnable action)throws Exception {
-        List<String> frames=QrTransfer.frames(packet);android.app.Dialog dialog=new android.app.Dialog(this);LinearLayout view=column();view.setBackgroundColor(BG);view.setPadding(dp(20),dp(20),dp(20),dp(20));view.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(dp(20),insets.getSystemWindowInsetTop()+dp(12),dp(20),insets.getSystemWindowInsetBottom()+dp(12));return insets;});view.addView(label(title,23,WHITE));
-        ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setBackgroundColor(Color.WHITE);image.setContentDescription("Group transfer QR");view.addView(image,new LinearLayout.LayoutParams(-1,0,1));
-        TextView counter=label("",13,GREEN);view.addView(counter);view.addView(label(caption,14,MUTED));int[] index={0};boolean[] paused={false};Runnable show=()->{try{int side=Math.min(image.getWidth(),image.getHeight());image.setImageBitmap(qrBitmap(frames.get(index[0]),side>0?side:960));counter.setText(frames.size()==1?"Ready to scan":"Frame "+(index[0]+1)+" of "+frames.size());}catch(Exception e){image.setImageDrawable(null);counter.setText("QR unavailable at this size. Use Copy transfer below.");}};image.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(r-l!=or-ol||b-t!=ob-ot)show.run();});show.run();
-        if(frames.size()>1){
-            LinearLayout controls=new LinearLayout(this);
-            Button cycle=button("Pause",()->{paused[0]=!paused[0];});
-            cycle.setOnClickListener(v->{paused[0]=!paused[0];cycle.setText(paused[0]?"Resume":"Pause");});
-            Button previous=button("Previous",()->{paused[0]=true;cycle.setText("Resume");index[0]=(index[0]+frames.size()-1)%frames.size();show.run();});
-            Button next=button("Next",()->{paused[0]=true;cycle.setText("Resume");index[0]=(index[0]+1)%frames.size();show.run();});
-            controls.addView(previous,new LinearLayout.LayoutParams(0,-2,1));controls.addView(cycle,new LinearLayout.LayoutParams(0,-2,1));controls.addView(next,new LinearLayout.LayoutParams(0,-2,1));view.addView(controls);
-        }
-        if(packet.startsWith("QKJ1:")||packet.startsWith("QKG2:")){
-            view.addView(button("Copy transfer",()->{ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("Enigma group transfer",packet));Toast.makeText(this,"Copied. Send the complete text to the other phone and paste it in joining.",Toast.LENGTH_LONG).show();}));
-        }
-        if(packet.startsWith("QKJ1:")){
-            LinearLayout recovery=new LinearLayout(this);recovery.addView(button("Start again",()->{dialog.dismiss();startJoining(true);}),new LinearLayout.LayoutParams(0,-2,1));recovery.addView(button("Paste invitation",()->{dialog.dismiss();pasteTransfer("join",null);}),new LinearLayout.LayoutParams(0,-2,1));view.addView(recovery);
-        }
-        if(action!=null)view.addView(primary(actionName,()->{dialog.dismiss();action.run();}));view.addView(button(action==null?"Done":"Cancel",dialog::dismiss));
-        dialog.setContentView(view);transientDialog=dialog;android.view.Window window=dialog.getWindow();if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);window.addFlags(WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);WindowManager.LayoutParams attrs=window.getAttributes();attrs.screenBrightness=1f;window.setAttributes(attrs);}dialog.show();if(window!=null)window.setLayout(-1,-1);
-        if(frames.size()>1){Runnable cycle=new Runnable(){public void run(){if(!dialog.isShowing()||sessionLocked)return;if(!paused[0]){index[0]=(index[0]+1)%frames.size();show.run();}ui.postDelayed(this,2500);}};dialog.setOnDismissListener(d->ui.removeCallbacks(cycle));ui.postDelayed(cycle,2500);}
+    private void qrDialog(String title,String packet,String caption)throws Exception {QrTransferDialog dialog=transferDialog(packet,null);if(!packet.startsWith("QKG2:")&&!packet.startsWith("QKA1:"))dialog.information(title,caption);transientDialog=dialog;dialog.show();dialog.getWindow().setLayout(-1,-1);}
+    private QrTransferDialog transferDialog(String packet,Runnable action)throws Exception {return new QrTransferDialog(this,packet,action,()->pasteTransfer("join",null),()->startJoining(true));}
+    private void showTransfer(String packet,Runnable action)throws Exception {
+        QrTransferDialog dialog=transferDialog(packet,action);
+        transientDialog=dialog;dialog.show();dialog.getWindow().setLayout(-1,-1);
     }
     static Bitmap qrBitmap(String packet)throws Exception {
         return qrBitmap(packet,960);

@@ -44,11 +44,11 @@ public final class EnigmaUiTest {
     private void spinners(View view,List<Spinner> found){if(view instanceof Spinner)found.add((Spinner)view);if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)spinners(((ViewGroup)view).getChildAt(i),found);}
     private void waitFor(ActivityScenario<MainActivity> scenario,String text)throws Exception {
         long until=System.currentTimeMillis()+25000;
-        while(System.currentTimeMillis()<until){AtomicBoolean found=new AtomicBoolean();scenario.onActivity(a->found.set(find(a.getWindow().getDecorView(),text)!=null));if(found.get())return;Thread.sleep(200);}
-        fail("Screen did not show "+text);
+        while(System.currentTimeMillis()<until){AtomicBoolean found=new AtomicBoolean();scenario.onActivity(a->{TextView view=find(a.getWindow().getDecorView(),text);found.set(a.hasWindowFocus()&&view!=null&&view.isShown()&&view.isEnabled());});if(found.get())return;Thread.sleep(200);}
+        preview(scenario,"failed");StringBuilder active=new StringBuilder();describe(InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow(),active);fail("Screen did not show "+text+"; active window: "+active);
     }
     private void click(ActivityScenario<MainActivity> scenario,String text) {
-        scenario.onActivity(a->{TextView view=find(a.getWindow().getDecorView(),text);assertNotNull(text,view);assertTrue(view.performClick());});
+        scenario.onActivity(a->{TextView view=find(a.getWindow().getDecorView(),text);assertNotNull(text,view);assertTrue("Main window must be reachable: "+text,a.hasWindowFocus());assertTrue(text,view.isEnabled());assertTrue(view.performClick());});
     }
     private void preview(ActivityScenario<MainActivity> scenario,String name)throws Exception {
         Thread.sleep(250);
@@ -79,6 +79,11 @@ public final class EnigmaUiTest {
         if(root==null)return null;
         if(editable?root.isEditable():text.equalsIgnoreCase(String.valueOf(root.getText())) || text.equalsIgnoreCase(String.valueOf(root.getContentDescription())))return root;
         for(int i=0;i<root.getChildCount();i++){AccessibilityNodeInfo found=node(root.getChild(i),text,editable);if(found!=null)return found;}return null;
+    }
+    private void waitForSystem(String text)throws Exception{
+        long until=System.currentTimeMillis()+10000;
+        while(System.currentTimeMillis()<until){AccessibilityNodeInfo found=node(InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow(),text,false);if(found!=null&&found.isVisibleToUser())return;Thread.sleep(150);}
+        fail("Active system window did not show "+text);
     }
     private boolean systemClick(String text)throws Exception {
         long until=System.currentTimeMillis()+5000;
@@ -153,7 +158,7 @@ public final class EnigmaUiTest {
             click(scenario,"Messages");waitFor(scenario,"ALL MESSAGES · TEXT & FILES");preview(scenario,"history");
             click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");preview(scenario,"locked");assertThrows(SecurityException.class,()->new Vault(target));unlock(scenario);
             click(scenario,"Groups");click(scenario,"Starter group");
-            click(scenario,"Invite new recipient");assertTrue(systemClick("Scan joining QR"));Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
+            click(scenario,"Invite new recipient");Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
             scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("handoff");field.setAccessible(true);assertFalse("Cancelled scanner must end the handoff allowance",field.getBoolean(a));}catch(Exception e){throw new AssertionError(e);}});
             KeyPair newcomer=generator.generateKeyPair();String newRequest=PairingProtocol.request(newcomer.getPublic(),newcomer.getPrivate(),"New recipient");String starterId=persisted.groups.get(0).id;
             scenario.onActivity(a->{try{java.lang.reflect.Field action=MainActivity.class.getDeclaredField("scanAction"),groupId=MainActivity.class.getDeclaredField("scanGroupId");action.setAccessible(true);groupId.setAccessible(true);action.set(a,"invite");groupId.set(a,starterId);java.lang.reflect.Method scanned=MainActivity.class.getDeclaredMethod("scanned",String.class);scanned.setAccessible(true);scanned.invoke(a,newRequest);}catch(Exception e){throw new AssertionError(e);}});
@@ -167,14 +172,14 @@ public final class EnigmaUiTest {
             try(Vault removed=openVault(target)){assertTrue(removed.invitationCache.isEmpty());assertTrue(removed.pendingInvites.isEmpty());assertTrue(removed.pairingUsed.contains(PairingProtocol.parseRequest(newRequest).id));assertEquals(2,removed.groups.get(0).members.size());}
             click(scenario,"Back to group");click(scenario,"Back to groups");click(scenario,"Join group");
             String previous;try(Vault before=openVault(target)){previous=before.joiningRequest;}
-            Thread.sleep(700);preview(scenario,"joining-request");assertTrue(systemClick("Start again"));Thread.sleep(500);try(Vault fresh=openVault(target)){assertNotEquals(previous,fresh.joiningRequest);}
-            assertTrue(systemClick("Scan owner's invitation"));Thread.sleep(600);shell("input keyevent 4");assertTrue("Cancelled scan returns to request instructions",systemClick("Cancel"));waitFor(scenario,"Groups");
+            Thread.sleep(700);preview(scenario,"joining-request");assertTrue(systemClick("More"));assertTrue(systemClick("Start again"));Thread.sleep(500);try(Vault fresh=openVault(target)){assertNotEquals(previous,fresh.joiningRequest);}
+            assertTrue(systemClick("More"));assertTrue(systemClick("Owner already has my codes"));assertTrue(systemClick("Scan owner's invitation"));Thread.sleep(600);shell("input keyevent 4");waitForSystem("Show 1/2");assertTrue("Cancelled scan returns to request instructions",systemClick("Cancel"));waitFor(scenario,"Groups");
             // Exercise the real joining commit/UI with a software owner and this device's Keystore key.
             Vault requesting=openVault(target);String request=requesting.joiningRequest;
             KeyPair owner=generator.generateKeyPair(),existing=generator.generateKeyPair();Protocol.Group remote=Protocol.create("Joined group",Protocol.random(32),owner.getPublic());
             String existingId=Protocol.fingerprint(existing.getPublic());remote.members.put(existingId,Protocol.b64(existing.getPublic().getEncoded()));remote.memberNames.put(existingId,"Existing member");
             String invitation=PairingProtocol.invite(remote,PairingProtocol.parseRequest(request),owner.getPublic(),owner.getPrivate());requesting.close();
-            click(scenario,"Join group");assertTrue(systemClick("Paste invitation"));
+            click(scenario,"Join group");assertTrue(systemClick("More"));assertTrue(systemClick("Paste invitation"));
             scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("transientDialog");field.setAccessible(true);android.app.AlertDialog dialog=(android.app.AlertDialog)field.get(a);editor(dialog.getWindow().getDecorView()).setText(invitation+"\n");dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();}catch(Exception e){throw new AssertionError(e);}});
             assertTrue("Joined confirmation",systemClick("Done"));waitFor(scenario,"Groups");
             try(Vault joined=openVault(target)){assertEquals(2,joined.groups.size());Protocol.Group imported=joined.groups.stream().filter(g->g.id.equals(remote.id)).findFirst().orElseThrow(AssertionError::new);assertEquals(remote.members,imported.members);assertArrayEquals(remote.seed,imported.seed);assertEquals(2,joined.history.size());assertEquals("",joined.joiningRequest);assertTrue(joined.pairingUsed.contains(PairingProtocol.parseRequest(request).id));}

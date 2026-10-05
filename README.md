@@ -2,11 +2,11 @@
 
 Offline Android encryption for a selected member of an owner-managed group. Android 8.0/API 26+. No account, server or Internet permission. The repository and APK distribution remain private.
 
-## Download 0.4.2
+## Download 0.4.3
 
 **[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Sign in, open the file and choose **Download raw**. Install it on both devices. It appears as **Enigma (test)**. This is an unaudited development prototype with no recovery; use disposable data while testing.
 
-The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both pairing devices to **0.4.2** for the smaller QR frames, scanner fallback and invitation retry controls. QKD3 text and file-v3 remain the current message formats.
+The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both pairing devices to **0.4.3** for stationary QR codes, manual scan confirmations and full-screen joining. QKD3 text and file-v3 remain the current message formats.
 
 ## Protect and set up your device
 
@@ -16,18 +16,20 @@ The app ID and debug signer are unchanged. Install over the existing test app if
 
 The protected vault is the app's local storage, not a separate personal file-storage feature. Leaving the app locks it; screen-off always locks. Camera setup and system file pickers have a controlled allowance of at most two minutes; the QR scanner allows at most five minutes to collect a large transfer. Screen-off still locks immediately. Fresh passphrase entry is required before readable-file export, reset and security-setting changes.
 
-## Join a group with two QR transfers
+## Join a group, one code at a time
 
-1. Only A creates the group. A is its owner; B joins that same group.
-2. B taps **Groups → Join group**. **Step 1 of 2** shows B's joining QR. A opens the group → **Invite new recipient → Scan joining QR**, scans B's screen and confirms **Invite**.
-3. A's **Step 2 of 2** shows the invitation encrypted only for B. B taps **Scan owner's invitation**, scans every frame, and sees **Joined [group]**. The group appearing on B means joining is complete. B does not invite A back.
-4. **Invited** on A means awaiting B's first verified reply, not that B must repeat joining. The optional confirmation QR is behind **Show confirmation QR** on B's success screen.
+1. Only A creates the group. B taps **Groups → Join group** and shows its first code.
+2. A opens the group → **Invite new recipient**. This opens the original standard scanner. A scans B's code and sees **Code scanned**; scanning pauses.
+3. B taps **Next code**, then A taps **Scan next code**. Repeat until A has all codes. Codes never advance on a timer.
+4. A taps **Continue → Invite** and shows its invitation codes. B taps **Swap phones**, reads the swap screen, then taps **Scan owner's invitation**.
+5. B scans A's invitation one code at a time: **Code scanned → Next code on A → Scan next code on B**. After the last code, B taps **Join group**. All group details and public keys import together.
+6. Joining is complete when the group appears on B. B does not invite A back. A's **Invited** status changes on B's first verified reply or optional confirmation.
 
-QR masks are checked for normal finder detection before display. Codes cycle every 2.5 seconds. Keep the entire code visible about 20–40 cm away. Use **Pause / Previous / Next** to show missing frames. If no frame is read after 12 seconds, the app tries a second offline scanner automatically; **Try other scanner** also switches manually. CameraX supports tapping the preview to focus. **Light on** is available. The Samsung S23 still needs a physical retest of this fallback.
+Every code occupies a square spanning the available screen width inside a non-floating full-screen page. Short instructions scroll separately; they do not squeeze the QR or camera into leftover height. The current code stays still for autofocus. The first camera uses the standard ZXing decorated preview/default framing and normal AUTO focus from release 1. **More → Try other scanner** selects the alternate CameraX path explicitly; no timer changes cameras. CameraX supports tap focus. **More → Light on** and **Restart scan** are available. QR patterns are checked for ordinary finder detection before display. These changes have emulator evidence; physical vendor camera behavior is not established by it.
 
-**Interrupted joining:** A reopens **Continue inviting [name]** in group details while the request is valid. B reopens **Join group** to continue the same request. Cancelling B's scanner returns to its request instructions. If the request expired, was already used in an older build, or the member was removed, B taps **Start again** and A invites that fresh QR. Deleting a member does not erase used-request protection. No app reset is needed.
+**Interrupted joining:** A reopens **Continue inviting [name]** while the request is valid. B reopens **Join group → More → Owner already has my codes** to reach the swap screen. If the request expired, was consumed in an older build, or the member was removed, B uses **More → Start again** and A invites that fresh request. Removing a member does not erase used-request protection. No app reset is needed.
 
-**Camera fallback:** B can **Copy transfer** and send the complete joining request to A in their usual messenger. A chooses **Paste request** from Invite new recipient and confirms admission. A then **Copy transfer**s the encrypted invitation back; B chooses **Paste invitation** on the Join group screen. These are the same signed/recipient-bound packets as QR, with the same verification and five-minute expiry. Group secrets/private keys are never copied in plaintext. Verify the known person/owner when using an external messenger.
+**Copy/Paste:** **More → Copy transfer** copies the complete signed public request or recipient-encrypted invitation. The scanner's **More → Paste request/invitation** returns to the matching paste field; B can also choose **More → Paste invitation** on its QR page. Owner admission and all cryptographic checks remain the same. Group secrets/private keys are never copied in plaintext. Use the known contact/owner in an external messenger. Requests expire within five minutes; restart after expiry.
 
 Pair directly with the known owner's device. A photographed invitation cannot be used with C's private key, but QR signatures alone do not prove a person's real-world identity. Member names and full fingerprints remain visible. Invitations expire within five minutes even when messages use No expiry.
 
