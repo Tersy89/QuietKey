@@ -1,81 +1,105 @@
-Enigma 0.4.1 development verification — 4 October 2026
+Enigma 0.4.2 development verification — 5 October 2026
 
 Editable QuietKey repository; synced sources/ remained read-only.
 README.md, SECURITY.md, TESTING.md and VERIFICATION.txt read before development.
-Repository confirmed private, main branch; local tools/keys/device data/logs/previews ignored.
+Repository confirmed private, main branch; tools/keys/device data/logs/previews ignored.
 
 Toolchain: Temurin JDK 17.0.20.1+1, checksum-pinned Gradle 8.9, AGP 8.7.3,
-SDK/target 35/min 26, Build Tools 34.0.0. AndroidX Biometric 1.1.0, Fragment 1.8.5,
-ZXing embedded 4.3.0, Bouncy Castle 1.86 low-level Argon2id.
+SDK/target 35/min 26, Build Tools 34.0.0. CameraX camera2/lifecycle/view 1.4.2,
+ZXing embedded 4.3.0/core 3.5.3, AndroidX Biometric 1.1.0/Fragment 1.8.5,
+Bouncy Castle 1.86 low-level Argon2id.
 Disposable EnigmaTest Android 15/API 35 emulator. No physical phone connected.
 
 PASS: Final build: JVM tests, app/instrumentation APK compilation and lint.
-      60 JUnit entries, zero failures/errors = 80 portable checks:
-      original 21 checks through one entry, direct 10, file 20, expiry 3,
-      security review 5, joining/directory/frame 17, password 4.
-      Password checks include Argon2id RFC9106 known-answer vector, real fixed
-      64 MiB derivation, wrong-password/tamper failures and master-key rewrap.
-PASS: Original standalone 21 checks; UTF-8 syntax parser accepts 28 Java files.
-PASS: Lint: zero errors, 37 warnings (localization, portrait orientation,
+      74 JUnit entries, zero failures/errors = 94 named portable checks:
+      original 21 through one entry, direct 10, file 20, expiry 3,
+      security review 5, joining/directory/frame 17, password 4,
+      joining retry coordinator 9, camera luminance layout 4, QR image property 1.
+      The image property covers 24 seeded payloads at 320/480/720/960 native pixels
+      (96 normal finder-detection cases, without PURE_BARCODE).
+      Password tests include RFC9106 known-answer vector, actual fixed 64 MiB
+      derivation, wrong-password/tamper failures and master-key rewrap.
+PASS: Original standalone 21 checks; UTF-8 syntax parser accepts 34 Java files.
+PASS: Lint: zero errors, 43 warnings (localization, portrait orientation,
       dependencies/deprecations and similar development items).
-PASS: Joining: recipient-only invitation, wrong private key/request,
-      tampering/expired request, forged/nonowner admission rejection,
-      complete directory import, automatic new-member introduction via text/files,
-      rejected directory forgery/rollback, local blocks, explicit owner reinvitation,
-      signed confirmation/replay rejection and reordered/duplicate/corrupt QR frames.
-      Tampered incoming file cannot commit a newer directory.
-PASS: QKD3 and file-v3 reject wrong group secret even with an endpoint key;
-      third-member C cannot decrypt A-to-B packets or sign as A despite shared seed.
+PASS: Recipient-only invitations, wrong private key/request, tampering/expiry,
+      forged/nonowner admission, complete directory import, automatic member
+      introduction via text/files, directory forgery/rollback, local blocks,
+      signed confirmation/replay rejection and reordered/duplicate/corrupt frames.
+      Tampered incoming files cannot commit newer directories.
+      QKD3/file-v3 reject a wrong group secret even with an endpoint key;
+      third member C cannot decrypt A-to-B or sign as A with the shared seed.
+PASS: Retries resume only the exact cached grant for the active approved
+      member/group/request. Updated directories regenerate the grant. Removed,
+      blocked, wrong-group and old uncached used requests remain rejected.
+      Fresh requests replace pending transfers without erasing used-request history;
+      obsolete receipts cannot confirm replacement grants. Cache bounded to 64.
+PASS: Luminance tests cover padded rows, pixel stride, buffer offset,
+      read-only buffers and invalid/overlapping bounds.
 
-PASS: Seven Android test methods across the final suite and targeted biometric
-      rerun, all opted in on the disposable emulator:
-      - Real Keystore signing/OAEP/private-file/vault tests (two methods).
+PASS: Nine Android methods across the full suite and targeted biometric run:
+      - Two real Keystore signing/OAEP/private-file/vault methods.
       - Device-bound password envelope/vault, wrong password/key/corruption,
         closed-session refusal and password replacement preserves stored groups.
-      - First-use UI: passphrase creation and Show/hide toggle preserves typed value;
-        five-second/60-frame camera setup, compact Home/Groups/Device, guide,
-        explicit recipient selection, QKD3 text/history/replay and five-minute TTL.
-        Manual/background lock, cleared drafts, FLAG_SECURE and password unlock.
+      - First-use UI: passphrase creation/Show toggle; five-second/60-frame camera
+        setup; compact tabs/guide; explicit recipient; text/history/replay and TTL;
+        manual/background locking, cleared drafts, FLAG_SECURE and password unlock.
         Actual Android picker encrypts/saves/reopens/restores a 200,000-byte file;
         readable export requires fresh passphrase. Reset cancellation retains data.
-        Owner invitation confirmation and recipient import with actual Keystore
-        identity preserve existing history. This part injects complete packets
-        at Activity boundaries, not a two-phone screen-to-camera exchange.
-      - Generated request/invitation QR frames decode at native 960/720/480/320
-        pixels; decoded frames then reach production scanner collection/result
-        and reconstruct the full invitation. Uses real QR image decoding; frame
-        submission to the collector remains an injected test boundary.
-      - Live camera test: emulator imagefile camera reads a 527-character production
-        QR through the actual preview/decoder/callback and returns the exact packet.
-        Native 320-pixel code in padded fixture compensates emulator projection.
-        No decoded strings are injected in this camera test. Fixture-only preparation
-        is explicitly skipped and was not counted as successful camera validation.
-      - Biometric: real Android strong-fingerprint prompt and authenticated Keystore
-        cipher enable vault unlock. Host emulator fingerprint touch 1 authenticates
-        enable and unlock. Cancel keeps vault locked; fresh passphrase is required
-        for enabling/disabling. No prompt-success callback is injected.
-The combined final suite passed six methods; its biometric method timed out
-because the host did not supply fingerprint input within 25 seconds. The same
-method then passed on the final APK with host fingerprint input supplied at both
-READY stages (11.614 seconds). This was a missing test interaction, not a bypass.
+        Owner admission survives Activity/vault recreation and resumes the identical
+        encrypted invitation without another admission. Real member removal clears
+        pending cache/mapping while retaining the consumed-request tombstone.
+        Start again changes the request; scanner cancellation returns to instructions.
+        Recipient import uses the real Paste invitation dialog/Continue action with
+        an injected clipboard-style packet; imports all group keys and retains history.
+        This is not a two-physical-phone screen-to-camera exchange.
+      - Generated request/invitation frames decode at 960/720/480/320 native pixels.
+        Decoded strings then enter production collection/result handling.
+        This covers images/reassembly with an injected collector boundary.
+      - Legacy camera and CameraX each read a 527-character production QR through
+        the emulator imagefile camera, actual preview/analyser/callback and result.
+        A third camera test makes only the legacy test decoder QR-blind (CODE_128);
+        the production 12-second fallback switches to CameraX and reads the fixture.
+        No decoded strings are injected in these three camera methods.
+        Native 320-pixel fixture padding compensates emulator camera projection;
+        fixture-only preparation deliberately skips validation and is not counted.
+      - Real Android strong-fingerprint prompt and authenticated Keystore cipher
+        enable/unlock the vault. Host finger remove then touch 1 authenticates both
+        READY stages. Cancellation refuses vault access; retry waits until the
+        cancelled system prompt closes. Fresh passphrase gates enable/disable.
+        No successful biometric callback is injected.
+The full suite passed eight methods in 208.082 seconds and explicitly skipped the
+opt-in biometric method. The targeted biometric method passed in 19.087 seconds.
+Earlier attempts failed on held/missing host fingerprint events and clicking before
+prompt dismissal; the final driver supplies real authentication and waits for the
+active unlock button. Those attempts are not counted as passes.
 
+PASS: Reproduced a generated QR failing ordinary finder detection with perfect pixels.
+      Merely changing decoder version did not solve it. QrImage now checks normal
+      decoding before display and tries alternate masks. The formerly failing frame
+      passes at 320/480/720/960 pixels; property and Android image/camera tests pass.
 PASS: Final APK installed with preserving device-tests helper on populated emulator.
-      Two default Keystore methods pass; five opt-in methods explicitly skip.
-      Stored groups.qkv/password.qkl hashes remain identical; app remains installed.
-PASS: Inspected own emulator previews: password setup, Home, Groups and Device.
+      Two default Keystore methods pass; seven opt-in methods explicitly skip.
+      groups.qkv/password.qkl hashes remain identical; app remains installed.
+PASS: Inspected own emulator invitation/joining previews: QR and controls readable.
 
-Changes relevant to regressions:
-- Unified QR-only continuous scanner, SurfaceView/FitCenter and full visible frame,
-  autofocus and optional torch; all joining directions collect multi-frame QR.
-- Smaller 480-character chunks (maximum 64), static cutoff 600, full-screen white
-  QR background, native pixel encoding, brightness, 2.5-second cycling and controls.
-- AndroidX Biometric compatibility for API 26+, explicitly per-operation Keystore
-  auth, and AAD supplied only after successful cryptographic authentication.
-- Removed String.isBlank/List.of API incompatibilities on older Android devices.
-- Simple Home sending, group details page, Device security subpage and current guide.
-- Show/hide on password setup, unlock, fresh authentication and password change.
+Changes relevant to reported regressions:
+- Retains P30-working legacy scanner first; independent CameraX fallback after
+  12 seconds without a decoded code, or by Try other scanner. Full-frame QR-only
+  decoding, normal/inverted luminance, padded-plane handling, focus/exposure tap,
+  torch, lifecycle guards and transient frame disposal.
+- Smaller 320-character emission chunks, static cutoff 400, maximum 96 frames;
+  accepts previous 480-character chunks. Native verified QR masks, quiet margin,
+  white background, brightness, 2.5-second cycling and missing-frame tips.
+- Numbered owner/joiner instructions, simple completion and optional confirmation.
+  Persisted Continue inviting, explicit Start again and removal cleanup prevent
+  interrupted joining from requiring reset. Used-request protection remains.
+- Copy/Paste signed public request or recipient-encrypted invitation uses the same
+  owner confirmation and verification as QR; no group secret/private key copied clear.
+- Existing 0.4.1 biometric compatibility, passphrase visibility, compact navigation
+  and cryptography remain. Current guide describes new recovery steps.
 
-APK: app.quietkey.debug, versionCode 5, versionName 0.4.1-debug, label Enigma (test).
+APK: app.quietkey.debug, versionCode 6, versionName 0.4.2-debug, label Enigma (test).
 Permissions: CAMERA, USE_BIOMETRIC, USE_FINGERPRINT and AndroidX app-specific
 signature permission. No Internet, microphone or broad-storage permission.
 Backups disabled; scanner/FileProvider nonexported; ciphertext cache sharing only.
@@ -83,28 +107,28 @@ Signer remains previous debug signer, certificate SHA-256:
 2aca54e2570fbbd3caaf35a523c8c21a19d3cf553eaf53937590905d402836b7
 
 Enigma.apk SHA-256:
-AE3E6AE2596FE5BF9C34D418EECD619B5F57515376D81EBB43B38ADB10213185
+40F0B48BC971CC354C51457A2020ADC4CFFB335A51522107A9B7F03BC5F0ADDD
 
-NOT RUN: Huawei P30/Samsung S23 vendor camera/focus and biometric prompts;
+NOT RUN: Physical Samsung S23 fallback/scanning; physical Huawei P30 regression
+         retest (owner reports prior 0.4.1 scanner works on P30);
          two/three-physical-device cycling screen QR transfer;
-         enrolled biometric invalidation on a physical device;
-         full 0.4.1 destructive reset (fresh-auth/cancellation verified; full OS reset
-         and new identity were verified in 0.3); phone-update retention;
+         vendor biometric prompts/enrollment invalidation;
+         full 0.4.2 destructive reset (fresh-auth/cancellation verified; full OS reset
+         and new identity previously verified in 0.3); phone-update retention;
          large-font/accessibility checks. No independent security audit.
-Earlier 0.4 evidence covered scanner launch/cancel, not actual QR camera decoding
-or enrolled biometric unlock. These additional regressions now cover an emulator;
-physical-phone fixes still require the owner's confirmation.
+Emulator evidence does not establish Samsung/Huawei camera or biometric behavior.
 
 Limits: static identity keys/no forward secrecy or ratchet; no automatic group
 rekey/owner transfer/recovery; local removal does not revoke retained secrets;
 TTL uses clocks/client policy and cannot erase saved plaintext. Biometric unlock
 is an alternate route, not a second factor. RSA identity/device password-box key
 are not per-operation user-auth bound. Unlocked endpoint compromise remains a risk.
-The protected vault is local app storage, not a dedicated personal file-storage feature.
+The vault is local app storage, not a dedicated personal file-storage feature.
 Old formats do not gain new group-secret protection; compatibility is not a DEV promise.
 
-SYSTEM_DESIGN.md describes implemented 0.4.1 architecture, workflows and limits;
-AGENTS.md requires maintaining it in the same change as future design changes.
-Install over the existing test app on both phones. Use Device → Security & unlock;
-if an old biometric setup fails, disable/enable it again after passphrase unlock.
-Follow README's two-QR joining and collect every frame without leaving the scanner.
+SYSTEM_DESIGN.md describes implemented 0.4.2 architecture, workflows and limits;
+AGENTS.md requires maintaining it with future design changes.
+Install over the existing test app on both phones. For a stuck old request, B taps
+Groups → Join group → Start again; A scans/pastes that fresh request and confirms.
+Do not reset either app merely to retry joining. On S23 allow automatic fallback
+or tap Try other scanner. Copy/Paste remains available if the camera cannot read.

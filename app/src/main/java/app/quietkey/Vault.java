@@ -27,6 +27,7 @@ public final class Vault implements AutoCloseable {
     public String joiningRequest="";
     public final HashSet<String> pairingUsed=new HashSet<>();
     public final LinkedHashMap<String,String> pendingInvites=new LinkedHashMap<>();
+    public final LinkedHashMap<String,JoiningFlow.Invitation> invitationCache=new LinkedHashMap<>();
     public Vault(Context context) throws Exception {
         this(context,null);
     }
@@ -57,7 +58,7 @@ public final class Vault implements AutoCloseable {
     public PublicKey publicKey() throws Exception { live();return ks.getCertificate(ID).getPublicKey(); }
     public PrivateKey privateKey() throws Exception { live();return (PrivateKey) ks.getKey(ID, null); }
     public synchronized byte[] copyMaster(){live();if(master==null)throw new IllegalStateException("Set an app password first");return master.clone();}
-    @Override public synchronized void close(){closed=true;if(master!=null)Arrays.fill(master,(byte)0);master=null;for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0);groups.clear();history.clear();joiningRequest="";pendingInvites.clear();pairingUsed.clear();}
+    @Override public synchronized void close(){closed=true;if(master!=null)Arrays.fill(master,(byte)0);master=null;for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0);groups.clear();history.clear();joiningRequest="";pendingInvites.clear();invitationCache.clear();pairingUsed.clear();}
     private SecretKey storageKey() throws Exception { return (SecretKey) ks.getKey(STORAGE, null); }
     private void load() throws Exception {
         byte[] bytes = file.readFully();
@@ -77,6 +78,8 @@ public final class Vault implements AutoCloseable {
         joiningRequest=root.optString("joiningRequest","");
         JSONArray used=root.optJSONArray("pairingUsed");if(used!=null){if(used.length()>10000)throw new SecurityException("Joining history full");for(int i=0;i<used.length();i++)pairingUsed.add(used.getString(i));}
         JSONObject pending=root.optJSONObject("pendingInvites");if(pending!=null){if(pending.length()>10000)throw new SecurityException("Too many invitations");Iterator<String> it=pending.keys();while(it.hasNext()){String id=it.next();pendingInvites.put(id,pending.getString(id));}}
+        JSONObject invitations=root.optJSONObject("invitationCache");
+        if(invitations!=null){if(invitations.length()>JoiningFlow.MAX_PENDING)throw new SecurityException("Too many saved invitations");Iterator<String> ids=invitations.keys();while(ids.hasNext()){String id=ids.next();JSONObject item=invitations.getJSONObject(id);String request=item.getString("request"),packet=item.getString("packet");if(request.length()>1600||packet.length()>30000)throw new SecurityException("Invalid saved invitation");invitationCache.put(id,new JoiningFlow.Invitation(request,item.getString("group"),item.getString("member"),packet,item.getLong("expires"),item.getLong("revision")));}}
         JSONArray list = root.getJSONArray("groups");
         if (list.length() > 30) throw new SecurityException("Too many groups");
         HashSet<String> ids = new HashSet<>();
@@ -117,6 +120,8 @@ public final class Vault implements AutoCloseable {
         JSONObject root = new JSONObject(); root.put("version",1); root.put("groups",list);
         root.put("deviceName",deviceName); root.put("setupCompleted",setupCompleted);
         root.put("personalGroupId",personalGroupId); root.put("setupCapturedAt",setupCapturedAt);
+        if(invitationCache.size()>JoiningFlow.MAX_PENDING)throw new SecurityException("Too many saved invitations");
+        JSONObject invitations=new JSONObject();for(Map.Entry<String,JoiningFlow.Invitation> entry:invitationCache.entrySet()){JoiningFlow.Invitation item=entry.getValue();JSONObject value=new JSONObject();value.put("request",item.request);value.put("group",item.group);value.put("member",item.member);value.put("packet",item.packet);value.put("expires",item.expires);value.put("revision",item.revision);invitations.put(entry.getKey(),value);}root.put("invitationCache",invitations);
         root.put("joiningRequest",joiningRequest);root.put("pairingUsed",new JSONArray(new ArrayList<>(pairingUsed)));root.put("pendingInvites",new JSONObject(pendingInvites));
         JSONArray messages=new JSONArray();for(MessageRecord message:history)messages.put(message.json());root.put("history",messages);
         byte[] clear = root.toString().getBytes(StandardCharsets.UTF_8);
