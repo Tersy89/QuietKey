@@ -1,116 +1,119 @@
-Enigma 0.4.3 development verification — 5 October 2026
+Enigma 0.4.4 development verification — 6 October 2026
 
 README.md, SECURITY.md, TESTING.md and VERIFICATION.txt read before development.
-Editable QuietKey repository; synced sources/ untouched/read-only. Repository private.
-Tools, local keys, device data, logs, fixtures and previews remain ignored.
+Editable QuietKey repository; synced sources/ untouched. GitHub repository private.
+Local tools, keys, device data, logs, fixtures and previews remain ignored.
 
-Reported regression: joining instructions/QR rendered poorly on phones; timed cycling
-prevented holding a code steady for focus. Earlier wide-emulator image checks did not
-establish small-screen usability or physical-phone reliability.
-Compared release 1 commit 8c75b80 and subsequent scanner implementations.
+User scope: defer QR work; prefer USB or personal hotspot for group joining.
+S23 camera detection/focus remains unresolved; no new physical-camera fix claimed.
 
-Implemented changes:
-- Restore release 1's standard DecoratedBarcodeView/default TextureView/framing and
-  normal periodic AUTO autofocus. Remove forced SurfaceView/FitCenter/full-frame/
-  continuous-focus configuration. Retain QR-only normal/inverted decoding.
-- No timed code cycling and no automatic camera switching. Original scanner first;
-  More → Try other scanner explicitly chooses CameraX. Light/Restart remain in More.
-- Each new unique code shows Code scanned and pauses camera/decoding. The user taps
-  Next code on the showing phone, then Scan next code on the scanning phone.
-  Duplicates do not advance progress; other codes are gated while success is showing.
-  The last Continue/Join group action returns the packet for normal verification.
-- Non-floating full-screen QrTransferDialog, width-based square QR/camera area,
-  short instructions above the code, one primary action, extra controls under More.
-  No weighted image squeezed by captions/buttons. Separate Swap phones/finish pages.
-- Invite opens scanning directly. Joiner shows request codes; owner scans/confirms
-  Invite; joiner explicitly swaps to scanning the owner's invitation. No reverse invite.
-- Saved invitation recovery, used-request protection, Start again and recipient-bound
-  cryptography remain. Copy/Paste remains in the request/invitation paths; optional
-  confirmation scanning has no mismatched invitation-paste action.
-- Guide/design/security/testing notes describe the implemented manual workflow.
+Implemented:
+- Groups Join/Invite chooser: USB cable (preferred), Personal hotspot, QR fallback.
+  Saved QR grants/confirmation moved inside the invitation method chooser.
+- Actual AOA phone-to-phone host/accessory adapter. USB role independent of owner role;
+  Android permissions, re-enumeration, only AOA data endpoints, no ADB/debugging/computer.
+  16-KiB accessory input buffering and bounded writes preserve logical USB packets.
+- Package-scoped mutable USB permission PendingIntent with random action, nonexported
+  receiver, manager permission recheck and cancellation on close. Corrected immutable
+  callbacks before release: Android would otherwise discard grant/device result extras.
+- Local hotspot TCP listener on selected private interface, literal RFC1918 addresses only;
+  endpoints use getByAddress without DNS. Client explicitly binds a non-VPN Wi-Fi Network
+  for No-Internet hotspots. Android Settings configures hotspot/association; no discovery.
+- Random 100-bit temporary code protects hotspot frames with AES-GCM. No code/key saving,
+  logging/autocopy. Strict bounded ordered framing, five failed initial connections,
+  ten-second initial reads, five-minute overall deadline and closing on cancel/lock/exit.
+- Unchanged signed QKJ1, recipient-encrypted QKG2 and QKA1. Explicit owner admission and
+  recipient confirmation; all group details/secret/public keys import together. Automatic
+  verified receipt marks Joined/cleans pending cache. Private identity keys never transfer.
+- Pending owner grant can remain Invited after interrupted/declined recipient import;
+  remove it or retry a fresh request. A committed group stays saved after lost confirmation.
+  Cancelled approvals clear uncommitted material and cannot show late stale consent.
+- Secure full-screen scrollable USB/hotspot windows, compact waiting/success, readable
+  two-line code, keyboard handling and updated device guide. SYSTEM_DESIGN/README/security/
+  phone-testing docs maintained. No message/file crypto or QR camera changes.
 
-PASS: Final build: JVM tests, app/test APK compilation, lint.
-      74 JUnit entries, zero failures/errors = 94 named portable checks:
-      original 21 through one entry, direct 10, files 20, expiry 3, security review 5,
-      joining/directory/frames 17, password 4, joining retry 9, luminance layout 4,
-      QR-image property 1. QR property includes 96 seeded normal-detection cases.
-PASS: Original standalone 21 checks; UTF-8 parser accepts 36 Java files.
-PASS: Lint: zero errors, 52 warnings (localization, deprecated camera APIs,
-      dependencies, portrait orientation and similar development items).
-PASS: Existing recipient/group-secret isolation, signatures/tampering, directory
-      authentication/rollback, TTL/replay, joining expiry/session binding and pending
-      grant recovery checks. Password vector includes RFC9106 and actual fixed 64 MiB
-      Argon2id derivation, wrong-password/tamper failure and master-key replacement.
+Final-source portable/build evidence:
+PASS tools/dev.ps1 build: unit tests, app/test APK compilation, Android lint.
+     .verification/build044-settings.log: BUILD SUCCESSFUL in 25 seconds; final test-only
+     cleanup rebuilt successfully in 4 seconds (.verification/build044-final-source.log).
+PASS 85 JVM JUnit entries, zero errors/failures/skips; 105 named portable checks when the
+     original ProtocolTest's 21 checks are counted individually instead of as one entry.
+PASS LocalJoinTest 11 methods: encrypted real TCP and fragmented plain duplex exchanges
+     with software RSA peers, complete import/directory/secret and signed receipt;
+     wrong device/key, random-code normalization, private-address guards, wrong code,
+     GCM damage/downgrade, bounds/truncation/non-ASCII, sequence/replay, invalid signature,
+     owner decline and consent timeout. Plain fragments test framing, not USB hardware.
+PASS tools/dev.ps1 protocol: original 21 checks; 42 Java files parsed without syntax errors.
+PASS Android lint: zero errors, 55 warnings (nonfatal API/resource/style warnings remain).
 
-PASS: All eleven Android methods verified on the final production APK:
-      - Two actual Keystore signing/OAEP/private-file/vault methods.
-      - Device-bound password-vault/envelope failures, close/refusal and rewrap.
-      - First-use UI: passphrase visibility/setup camera, compact navigation, selected
-        recipient, text TTL/history/replay, background/manual lock, guide/reset cancel,
-        actual Android picker 200,000-byte file encrypt/save/open/restore round-trip,
-        fresh authentication for readable export and FLAG_SECURE.
-        Real owner confirmation/cache survives Activity/vault recreation, exact packet
-        resumption, pending member removal and used-ID retention. Start again, scanner
-        cancel/return and actual Paste invitation/Continue import preserve history and
-        import all member keys. Software packets are injected at documented UI inputs;
-        this does not simulate two physical phones scanning each other's displays.
-      - Actual strong fingerprint prompt/Keystore CryptoObject enable/cancel/retry/
-        unlock/disable. Host finger remove then touch 1 at both READY stages. No
-        successful callback injected; fresh passphrase gates enable/disable.
-      - Full-screen displayed request/invitation windows: each actual rendered ImageView
-        bitmap decodes with normal finder detection; QR is square, at least 80% screen
-        width, fully visible/unclipped. Holding 3.5 seconds never changes its frame;
-        manual Next reaches every frame, then explicit swap/finish pages/buttons.
-      - Scanner success/layout: full square viewport, original AUTO focus, readable
-        success/next instructions and explicit per-code continuation.
-      - Generated request/invitation images decode at native 960/720/480/320 pixels;
-        decoded strings enter production collection/result boundary. Manual pause
-        gates another code and changing cameras retains collection. This boundary
-        is injected, distinct from live camera validation.
-      - Three actual emulator camera methods: original camera, direct CameraX and
-        manual alternate after a QR-blind test decoder. Each reads a 527-character
-        fixture through preview/decoder/callback, shows success and requires Continue.
-        No decoded strings injected. Fixture padding compensates emulator projection;
-        fixture-only preparation is not counted as successful camera validation.
-The final-APK combined run passed ten methods, including actual biometric prompts;
-its UI method failed because the driver clicked the scanner's Cancel during the return
-transition instead of waiting for the request page. After waiting for the active Show
-1/2 screen, the same complete UI method passed on that unchanged APK in 56.302 seconds.
-A previous file-picker driver race was corrected to require the main window be focused,
-visible and enabled; its targeted UI run also passed (79.955 seconds). Intermediate
-failed runs are not reported as passing combined runs. All eleven methods have passes.
+Android evidence — disposable EnigmaTest, Android 15/API35 only:
+PASS NearbyJoinTest: final APK, 6 methods, 50.984 seconds, zero failures/skips;
+     .verification/nearby044-settings-final.log, 720x1280/density320/font1.5.
+     Actual production Android TCP listener/client + actual MainActivity owner approval,
+     recipient confirmation/import/decline, Keystore identity and encrypted-vault storage.
+     Software peer verifies packets, receives complete keys/secret and returns signed receipt.
+     Correct Joined state/cache cleanup, preserved history/identity and refusal to import
+     a declined group checked. Method ordering/USB waiting, receiver startup and background
+     cancellation checked. Real Android connection settings open/Back, ended handoff and preserved vault checked.
+     Actual PendingIntent fill-in grant/denial and close cancellation
+     tested: simulated result delivery, not a hardware permission prompt or cable exchange.
+PASS Earlier default-size 4-method Nearby run: 41.854 seconds; font1.5 run: 43.812 seconds;
+     explicit Wi-Fi-binding 4-method run: 45.220 seconds. Final run includes settings return, Wi-Fi binding
+     and permission correction. Real rendered owner/USB/success previews inspected.
+     Initial run: 3 passes/1 test assertion failure because expected seed referenced a
+     correctly cleared closed test Vault. Compare to freshly reopened persisted seed;
+     complete reruns pass. No production crypto workaround introduced.
+PASS EnigmaUiTest#setupCameraAndNavigation on final APK: 82.906 seconds;
+     .verification/android044-broad.log. App data cleared only on explicitly identified
+     disposable EnigmaTest for first-use. Password setup/visibility/unlock, actual camera
+     setup, four tabs, recipients, text/TTL/replay/history, 200k file through actual Android
+     pickers and restored bytes, fresh export authentication, guide/reset cancellation,
+     locks, saved QR-grant resumption after recreation, member removal/cache/tombstones,
+     fresh QR request/cancel return, real paste import with complete keys/retained history.
 
-PASS: Two layout methods at 720×1280/density 320, font scales 1.3 (62.718 seconds)
-      and 1.5 (62.995 seconds). Inspected actual small-screen invitation QR, swap and
-      scanner success renders. A partly hidden caption found in development was
-      shortened/moved above the QR before these final layout checks.
-PASS: Final APK installed over populated emulator using preserving device-tests helper.
-      Two default Keystore methods pass; nine opt-in methods explicitly skip.
-      groups.qkv/password.qkl hashes remain identical; installation remains present.
+PASS Preserving tools/dev.ps1 device-tests helper on populated final-APK emulator:
+     2 Keystore/file passes + 15 deliberate opt-in skips, 1.498 seconds.
+     .verification/retention044.log. Install -r of app/test APKs retained byte-identical
+     groups.qkv and password.qkl hashes before/after. This is emulator update/helper
+     retention evidence, not a physical phone-update claim. No Gradle connected uninstall.
 
-Toolchain: Temurin 17.0.20.1+1, Gradle 8.9 checksum pinned, AGP 8.7.3;
-SDK/target 35/min 26, Build Tools 34.0.0; ZXing embedded 4.3.0/core 3.5.3;
-CameraX 1.4.2; AndroidX Biometric 1.1.0/Fragment 1.8.5; Bouncy Castle 1.86.
-Disposable EnigmaTest Android 15/API 35 emulator only; no physical phone connected.
-APK: app.quietkey.debug, versionCode 7, versionName 0.4.3-debug, label Enigma (test).
-Permissions: CAMERA, USE_BIOMETRIC, USE_FINGERPRINT, AndroidX signature receiver perm.
-No Internet, microphone or broad storage. Backups disabled; scanners/provider nonexported.
-Previous debug signer certificate SHA-256 retained:
+PASS Final-APK biometric/vault/QR batch: 9 methods, 209.917 seconds, zero failures/skips;
+     .verification/android044-regressions-final.log. Passphrase-confirmed biometric
+     enable/lock/cancel/retry/unlock/disable through actual Android BiometricPrompt and
+     CryptoObject; emulator fingerprint 1 delivered after release at each READY marker,
+     no injected successful-auth callback. Keystore signing/OAEP/pairing/vault persistence,
+     isolated password-vault wrong-key/password/corruption/rewrap/key-clear checks;
+     actual rendered QR pixels and full-screen/manual controls; generated images/reassembly
+     and actual emulator imagefile camera decoding through legacy, CameraX and explicit
+     alternate. Collector tests inject decoded frames; camera tests do not. No physical
+     QR autofocus/reliability claim follows from the fixture/projection evidence.
+     Earlier pre-settings candidate batch also passed all 9 in 208.635 seconds.
+PASS All 17 distinct Android test methods have final-APK passes across targeted batches
+     plus preserving helper: Nearby6 + broad UI1 + regression9 + KeystoreFile1.
+     Default helper's 15 opt-in skips are documented above, not counted as validation.
+
+APK/environment:
+JDK17.0.20.1+1, Gradle8.9 checksum-pinned wrapper, AGP8.7.3, SDK/target35/min26,
+BuildTools34.0.0, ZXing embedded4.3.0/core3.5.3, CameraX1.4.2, Biometric1.1.0/
+Fragment1.8.5, Bouncy Castle1.86. No new dependencies/external services.
+App app.quietkey.debug, versionCode8, versionName0.4.4-debug, label Enigma (test).
+Permissions CAMERA, USE_BIOMETRIC, USE_FINGERPRINT, INTERNET, ACCESS_NETWORK_STATE,
+AndroidX signature receiver permission. No Wi-Fi-state/location/nearby-discovery/mic/
+broad storage. Backups disabled. No exported pairing Activity/service.
+Internet permission grants broader OS capability; implemented endpoints are private IPv4.
+No Internet-service/HTTP/DNS/analytics request. No persistent/background joining service.
+Root Enigma.apk 7,548,501 bytes, identical to built debug APK; v2 signature verified.
+SHA-256: 38848AB739B3A7D684BF6A28B7027A9B8F7AB1567BA9F2A7AC767B25FAB343F3
+Previous debug signer certificate unchanged:
 2aca54e2570fbbd3caaf35a523c8c21a19d3cf553eaf53937590905d402836b7
 
-Root Enigma.apk SHA-256:
-E699DC6505D29128448EA0BE411CF00F6F1D299B692C93D06AC31FB9B51F6BD8
-
-NOT RUN: Physical Huawei P30/Samsung S23 scanning/focus/biometric prompts;
-         two/three-physical-phone manual QR exchange, phone-update retention,
-         enrollment invalidation, full destructive 0.4.3 reset (cancellation/fresh
-         authentication verified; complete OS reset/new identity verified in 0.3);
-         wider accessibility/device coverage. No independent security audit.
-No emulator result establishes physical vendor-camera behavior.
-
-Limits unchanged: static keys/no forward secrecy or ratchet; no group rekey/owner
-transfer/recovery; local removal does not revoke retained secrets. TTL uses clocks
-and client policy and cannot erase saved plaintext. Biometric unlock is an alternate
-route, not a second factor; unlocked endpoint compromise remains a risk. Vault means
-local app storage, not a dedicated personal-file vault. Old formats gain no retroactive
-security and development compatibility is not promised. No retained phone was reset.
+NOT RUN: physical P30/S23 USB/accessory prompts/cable/OTG roles; two-physical-phone
+hotspot association/no-Internet routing/isolation/receipt; Android16/17 local-network
+enforcement; vendor biometric/enrollment invalidation; physical QR detection/focus;
+physical update retention; complete destructive 0.4.4 reset; wider keyboard/accessibility/
+device coverage. No physical phone was connected or reset. Emulator/software-peer checks
+do not establish physical two-phone interoperability. No independent security audit.
+Static keys/no forward secrecy/ratchet/rekey/owner-transfer/recovery. TTL cannot erase
+saved plaintext. Biometrics are an alternate unlock, not a second factor. Unlocked endpoint
+compromise and malicious owners/recipients remain risks. Older development formats gain
+no retroactive security or compatibility commitment. Historical evidence remains in Git.

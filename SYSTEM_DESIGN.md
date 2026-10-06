@@ -1,12 +1,12 @@
 # Enigma system design
 
-Version: 0.4.3 development build. Updated: 5 October 2026.
+Version: 0.4.4 development build. Updated: 6 October 2026.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
 ## Purpose and trust model
 
-Enigma encrypts offline text and arbitrary files for a selected device within an owner-managed group. An external messenger carries encrypted packets. Enigma has no account service, delivery server, Internet permission or VPN functionality. The source repository and APK distribution are private; public source code would not reveal randomly generated keys.
+Enigma encrypts offline text and arbitrary files for a selected device within an owner-managed group. An external messenger carries encrypted packets. Enigma has no account service, delivery backend or VPN functionality. It uses Android Internet permission for a temporary local hotspot joining socket, without Internet service requests. The source repository and APK distribution are private; public source code would not reveal randomly generated keys.
 
 Every installation has a device identity. Each group has an independent 32-byte secret. A device identity can participate in multiple groups. New private packets require the intended sender/recipient private RSA key **and** the relevant group secret to decrypt. Knowing C's private key and the shared group secret must not reveal A↔B content, assuming A/B, their keys and their authenticated key bindings remain uncompromised.
 
@@ -28,6 +28,9 @@ The group owner authenticates the member directory. Trusting that owner delegate
 | QrImage | Native QR rendering with normal-finder self-check and alternate mask selection |
 | QrLuma | CameraX Y-plane extraction honoring vendor row/pixel stride |
 | JoiningFlow | Fresh/resumed requests, bounded saved invitations, grant-scoped retry and pending cleanup |
+| NearbyJoinDialog | Foreground full-screen USB/hotspot setup, bounded transfer lifecycle, temporary connection code |
+| UsbJoinLink | AOA host/accessory permission, re-enumeration, buffered USB data endpoints; no ADB |
+| LocalJoinWire / LocalJoinSession | Bounded ordered duplex exchange; authenticated hotspot frames; approval/receipt ordering |
 | CameraActivity | Additional live camera entropy for group creation; no saved video/audio |
 
 ```mermaid
@@ -65,7 +68,40 @@ Leaving Enigma locks it, clears the visible data and queues disposal of loaded s
 
 Fresh passphrase authentication is required before readable-file export, reset, password change and biometric configuration. Biometric unlock does not replace the passphrase for these actions. There is no password recovery. Android Settings can clear data for a fresh start, losing the local identity/data. No automatic wiping follows failed passwords.
 
-## Guided two-QR joining
+## Preferred USB and personal-hotspot joining
+
+```mermaid
+sequenceDiagram
+  participant A as Group owner A
+  participant B as Recipient B
+  A->>A: Invite new recipient; choose USB or hotspot
+  B->>B: Join group; choose same method; fresh signed request
+  B->>A: QKJ1 over connected cable or code-protected local socket
+  A->>A: Verify request; user confirms device; persist approved grant
+  A->>B: QKG2 encrypted only for B with full group and directory
+  B->>B: Verify and decrypt; user confirms group/owner; persist group
+  B->>A: QKA1 signed receipt
+  A->>A: Verify pending grant; persist Joined; remove pending cache
+  A->>B: Done
+```
+
+Groups → Join group and Invite new recipient both present USB cable (preferred), Personal hotspot, then QR fallback. Nearby joining regenerates the active signed request while retaining the device identity. MainActivity owns the unlocked vault and both approval dialogs. Neither transport holds identity private keys or plaintext group secrets. Parsed candidate group secrets exist transiently in MainActivity until the recipient confirms; cancellation clears uncommitted material. Owner approval persists the member as Invited before delivery; only a verified receipt/message makes it Joined. Failed delivery or recipient decline does not undo an owner-authorized pending grant. Remove the pending member or retry a fresh request to resolve it. A commit is retained if the last confirmation is lost.
+
+**USB:** UsbJoinLink polls only while the joining window is open. It can connect through either host or accessory APIs independently of owner/joiner role. A package-scoped mutable PendingIntent (API31+) preserves USB permission result extras; it uses a random action, nonexported receiver and cancellation on close. UsbManager permission is rechecked before opening endpoints. A single attached device requires Android permission, then AOA GET_PROTOCOL (51), SEND_STRING (52) and START (53); after re-enumeration it requests permission for the accessory data device. Google VID 0x18d1 / PID 0x2d00 or 0x2d01, interface zero, bulk IN/OUT are used. The optional ADB interface is never opened. The accessory side matches Enigma / Enigma Join strings, asks permission and opens duplicated file-descriptor handles. A 16-KiB buffered input accommodates entire AOA logical packets before byte-level framing; writes are chunked to 16 KiB. Disconnect, cancellation, lock and deadline close handles. A data cable/OTG host and compatible accessory mode are necessary; no USB debugging, computer, root, tethering or file-copy workaround is used. String metadata and a cable alone are not cryptographic real-world identity proof. Phone interoperability is pending physical verification.
+
+**Personal hotspot:** Configure the owner's hotspot and connect B using Android Settings. The app does not start a hotspot, scan nearby networks or join Wi-Fi itself. Returning from Open connection settings requires reopening the method. An owner address selector enumerates private IPv4 addresses on Wi-Fi/hotspot/Ethernet/tether interfaces; the owner chooses the address reachable by B. NearbyJoinDialog binds TCP port 45873 only to that address while waiting. B's address may prefill from the Wi-Fi gateway but must match A. The joining socket binds explicitly to a connected non-VPN Android Wi-Fi Network instead of relying on the default/mobile-data network. Its gateway hint comes from that network's route list. Only literal RFC1918 addresses are accepted; no hostname/public/loopback/link-local endpoint or discovery request is used. Network-state and INTERNET permissions support these local operations. The implemented app has no external network service; the INTERNET permission is not an OS-level private-network restriction. Same-private-Wi-Fi joining also works unless client isolation/routing prevents it. Mobile data/Internet connectivity is unnecessary.
+
+The temporary code is 20 independent random symbols from a 32-character unambiguous alphabet, displayed as five parts: 100-bit random secret, separate from hotspot/app passwords. SHA-256(versioned prefix + normalized code) derives a 32-byte transport key. Each Wi-Fi frame uses AES-GCM, fresh 12-byte nonce and full framing header AAD. The secret stays in RAM, is not saved/logged/autocopied and expires with the five-minute window. It authenticates code possession, so share directly only with the known recipient. USB uses the same framing without this outer code encryption; QKG2 remains recipient-encrypted on both transports. The code is not a replacement for owner approval or public-key/request/signature/lifetime verification.
+
+LocalJoinWire EJW1 uses 4-byte magic, 1-byte mode, 1-byte type, 4-byte per-direction sequence and 4-byte length. Plain ASCII payload limits: QKJ1 1,600, QKG2 30,000, QKA1 1,500, Done exact Joined (6). Encrypted bodies add a 12-byte nonce and 16-byte tag. Allocations are bounded before reading. Ordering is request/invitation/receipt/done; each direction permits two frames and refuses downgrade, wrong direction/type, bad sequence and malformed/truncated input. LocalJoinSession gates messages on CompletableFuture approvals and a monotonic deadline; MainActivity executes crypto/persistence on its existing worker. The owner TCP listener permits at most five failed initial connections, with ten-second initial reads and one verified request per session. Remaining network reads and UI approvals have the overall five-minute watchdog. Cancel/lock/background/destruction closes transport and cancels approvals. Screen-off always locks; USB permission prompts have a controlled five-minute handoff, connection settings two minutes. Returning from settings clears that allowance through an ActivityResult callback before any new joining attempt. No service/background listener is installed.
+
+A successful screen requires B's durable commit and A's verified receipt. If final acknowledgement fails, B can retain the imported group while A still says Invited or B reports interrupted confirmation. A verified message confirms it later. Cryptographic admission is identical to QR; no reverse invitation or separate public-key scan is needed. Android 16's optional local-network restriction and future target changes require separate permission validation. Physical S23/P30 USB roles, accessory prompts, hotspot isolation and complete two-phone exchange remain explicitly unverified.
+
+## QR fallback (deferred)
+
+The manual QR implementation from 0.4.3 is retained without camera changes. Choose QR fallback in the method chooser; saved grants and QR confirmation move under the owner's invitation chooser. S23 detection/focus remains unresolved. The retained flow is described below.
+
+
 
 ```mermaid
 sequenceDiagram
@@ -80,8 +116,8 @@ sequenceDiagram
   B-->>A: Optional signed confirmation or first verified reply
 ```
 
-1. B taps Join group. QKJ1 contains B's public key, device name, a fresh random 16-byte request identifier and signed five-minute creation/expiry fields. Its signature binds the request to that key, but a photographed request is not proof of live physical presence. B's private key remains in Keystore.
-2. A selects the group, taps Invite new recipient and scans directly from B's screen. After confirmation A records B as Invited and creates an owner-signed updated directory. Used identifiers are refused for new grants; exact pending grants can be resumed using JoiningFlow.
+1. B taps Join group → QR fallback. QKJ1 contains B's public key, device name, a fresh random 16-byte request identifier and signed five-minute creation/expiry fields. Its signature binds the request to that key, but a photographed request is not proof of live physical presence. B's private key remains in Keystore.
+2. A selects the group, taps Invite new recipient → QR fallback and scans directly from B's screen. After confirmation A records B as Invited and creates an owner-signed updated directory. Used identifiers are refused for new grants; exact pending grants can be resumed using JoiningFlow.
 3. QKG2 encrypts the complete joining payload for B. A fresh AES key encrypts group ID/name/expiry, group secret and signed member directory; RSA-OAEP wraps the AES key only to B. The authenticated header binds owner public key, B fingerprint, request ID, creation/expiry, wrapped key and nonce. A signs the exact envelope. Invitation expiry is independent of the user's No-expiry message default.
 4. B checks its active request, intended fingerprint, signature, lifetime, GCM authentication, owner-signed directory and membership before committing any trust. All public member keys import together. Duplicate group import refuses rather than replacing history/replay state. Consumed joining IDs are retained separately from groups, so deleting a group does not erase them.
 5. B sees a simple success screen once the group is committed; no reverse invitation is required. A says Invited until QKA1 signed confirmation or B's first verified private text reply is received. The optional confirmation cannot grant new membership; it refers to an already-approved pending request. Offline delivery is not inferred from QR display.
@@ -92,7 +128,7 @@ QrTransferDialog uses the app's non-floating theme, system insets and a scrollab
 
 Full-screen codes try the default QR mask, then masks 0–7 until ordinary finder detection returns the exact payload at measured native size. Error correction M, six-module margins and brightness remain. This self-check does not establish camera performance. The camera's first path restores release 1's DecoratedBarcodeView, default TextureView/framing and periodic AUTO autofocus; the forced SurfaceView/FitCenter/full-frame/continuous-focus setup is removed. QR-only normal/inverted decoding remains. There is no automatic camera switch. More → Try other scanner explicitly selects CameraX 1.4.2/Camera2, FIT_CENTER preview + latest-frame ImageAnalysis at target 1280×720, stride-aware Y extraction and tap focus/exposure. Each accepted frame stops preview/analysis until manual continuation; generation checks reject stale callbacks. Proxies close, copies clear, no camera images are stored. FLAG_SECURE, screen-on and bounded handoff remain.
 
-Copy/Paste, Start again and Previous code are in the display's More menu. The scanner's More menu provides Light, alternate camera, Restart scan and matching paste transport. Copying the exact signed QKJ1 or recipient-encrypted QKG2 changes no consent/verification. Cancelling B's scanner returns to the request page; Owner already has my codes resumes the swap step. The known-owner/person authentication requirement remains when using a messenger. Saved invitation resumption and used-request tombstones from 0.4.2 remain unchanged.
+Copy/Paste, Start again and Previous code are in the display's More menu. The scanner's More menu provides Light, alternate camera, Restart scan and matching paste transport. Copying the exact signed QKJ1 or recipient-encrypted QKG2 changes no consent/verification. Cancelling B's scanner returns to the request page; Owner already has my codes resumes the swap step. The known-owner/person authentication requirement remains when using a messenger. Saved invitation resumption and used-request tombstones from 0.4.2 remain unchanged. Continue QR invitation and Scan QR confirmation are now under Invite new recipient.
 
 The encrypted vault retains at most 64 pending invitation records: exact request, group/member, ciphertext, expiry and roster revision. JoiningFlow permits a consumed request to resume only its still-pending exact grant with the member present and unblocked. An unchanged roster returns identical ciphertext; a changed roster produces a new owner-signed packet after confirmation. Removal of a member/group or replacement with a fresh request cancels corresponding cached grants/mappings while retaining the permanent used-ID ledger (maximum 10,000). Expired/uncached/removed requests require More → Start again on B; this replaces the active session without replacing B's identity. A stale receipt cannot confirm a replacement grant. Receipt/message verification cleans up completed cached grants. No reset is required for joining recovery.
 
@@ -140,6 +176,8 @@ Executed build/test evidence is recorded in VERIFICATION.txt, not inferred from 
 Planned work: reviewed ratcheting/forward secrecy; separate signing/decryption identities with explicit transition; authenticated group rekeying; dedicated personal file vault if requested; recovery design if requested; accessibility/device-size coverage; independent security audit. These are not claims about the current build.
 
 ## Change log
+
+- 0.4.4 / 6 October 2026: USB-first joining, personal-hotspot alternative, QR deferred to fallback; AOA host/accessory adapter, temporary-code authenticated local frames, two-sided consent and automatic signed confirmation; foreground transport lifecycle and updated device guide.
 
 - 0.4.3 / 5 October 2026: restore release 1 standard scanner/autofocus defaults; remove automatic camera switching and QR cycling; fixed square full-screen QR/camera areas with scrollable text; manual per-code success/continuation, explicit swap and completion screens; rendered-pixel/layout regressions at small screens and enlarged text.
 

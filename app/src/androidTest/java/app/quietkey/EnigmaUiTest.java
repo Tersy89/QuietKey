@@ -158,7 +158,7 @@ public final class EnigmaUiTest {
             click(scenario,"Messages");waitFor(scenario,"ALL MESSAGES · TEXT & FILES");preview(scenario,"history");
             click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");preview(scenario,"locked");assertThrows(SecurityException.class,()->new Vault(target));unlock(scenario);
             click(scenario,"Groups");click(scenario,"Starter group");
-            click(scenario,"Invite new recipient");Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
+            click(scenario,"Invite new recipient");assertTrue(systemClick("QR fallback"));Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
             scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("handoff");field.setAccessible(true);assertFalse("Cancelled scanner must end the handoff allowance",field.getBoolean(a));}catch(Exception e){throw new AssertionError(e);}});
             KeyPair newcomer=generator.generateKeyPair();String newRequest=PairingProtocol.request(newcomer.getPublic(),newcomer.getPrivate(),"New recipient");String starterId=persisted.groups.get(0).id;
             scenario.onActivity(a->{try{java.lang.reflect.Field action=MainActivity.class.getDeclaredField("scanAction"),groupId=MainActivity.class.getDeclaredField("scanGroupId");action.setAccessible(true);groupId.setAccessible(true);action.set(a,"invite");groupId.set(a,starterId);java.lang.reflect.Method scanned=MainActivity.class.getDeclaredMethod("scanned",String.class);scanned.setAccessible(true);scanned.invoke(a,newRequest);}catch(Exception e){throw new AssertionError(e);}});
@@ -166,11 +166,11 @@ public final class EnigmaUiTest {
             try(Vault invited=openVault(target)){String newId=Protocol.fingerprint(newcomer.getPublic());assertEquals("Invited",invited.groups.get(0).memberStatus.get(newId));assertEquals(newId,invited.pendingInvites.get(PairingProtocol.parseRequest(newRequest).id));assertEquals(3,invited.groups.get(0).members.size());}
             // Reopen an unfinished invitation after a real vault reload; the grant stays identical.
             String issued;try(Vault cache=openVault(target)){issued=cache.invitationCache.get(PairingProtocol.parseRequest(newRequest).id).packet;}
-            scenario.recreate();unlock(scenario);click(scenario,"Continue inviting New recipient");assertTrue(systemClick("Invite"));assertTrue(systemClick("Done"));
+            scenario.recreate();unlock(scenario);click(scenario,"Invite new recipient");assertTrue(systemClick("Continue QR invitation: New recipient"));assertTrue(systemClick("Invite"));assertTrue(systemClick("Done"));
             try(Vault cache=openVault(target)){assertEquals(issued,cache.invitationCache.get(PairingProtocol.parseRequest(newRequest).id).packet);assertEquals(3,cache.groups.get(0).members.size());}
             click(scenario,"Manage members (3)");scenario.onActivity(a->{TextView member=find(a.getWindow().getDecorView(),"New recipient · Invited");assertNotNull(member);TextView remove=find((View)member.getParent(),"Remove local trust");assertNotNull(remove);remove.performClick();});assertTrue(systemClick("Remove"));
             try(Vault removed=openVault(target)){assertTrue(removed.invitationCache.isEmpty());assertTrue(removed.pendingInvites.isEmpty());assertTrue(removed.pairingUsed.contains(PairingProtocol.parseRequest(newRequest).id));assertEquals(2,removed.groups.get(0).members.size());}
-            click(scenario,"Back to group");click(scenario,"Back to groups");click(scenario,"Join group");
+            click(scenario,"Back to group");click(scenario,"Back to groups");click(scenario,"Join group");assertTrue(systemClick("QR fallback"));Thread.sleep(500);
             String previous;try(Vault before=openVault(target)){previous=before.joiningRequest;}
             Thread.sleep(700);preview(scenario,"joining-request");assertTrue(systemClick("More"));assertTrue(systemClick("Start again"));Thread.sleep(500);try(Vault fresh=openVault(target)){assertNotEquals(previous,fresh.joiningRequest);}
             assertTrue(systemClick("More"));assertTrue(systemClick("Owner already has my codes"));assertTrue(systemClick("Scan owner's invitation"));Thread.sleep(600);shell("input keyevent 4");waitForSystem("Show 1/2");assertTrue("Cancelled scan returns to request instructions",systemClick("Cancel"));waitFor(scenario,"Groups");
@@ -179,7 +179,7 @@ public final class EnigmaUiTest {
             KeyPair owner=generator.generateKeyPair(),existing=generator.generateKeyPair();Protocol.Group remote=Protocol.create("Joined group",Protocol.random(32),owner.getPublic());
             String existingId=Protocol.fingerprint(existing.getPublic());remote.members.put(existingId,Protocol.b64(existing.getPublic().getEncoded()));remote.memberNames.put(existingId,"Existing member");
             String invitation=PairingProtocol.invite(remote,PairingProtocol.parseRequest(request),owner.getPublic(),owner.getPrivate());requesting.close();
-            click(scenario,"Join group");assertTrue(systemClick("More"));assertTrue(systemClick("Paste invitation"));
+            click(scenario,"Join group");assertTrue(systemClick("QR fallback"));assertTrue(systemClick("More"));assertTrue(systemClick("Paste invitation"));
             scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("transientDialog");field.setAccessible(true);android.app.AlertDialog dialog=(android.app.AlertDialog)field.get(a);editor(dialog.getWindow().getDecorView()).setText(invitation+"\n");dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();}catch(Exception e){throw new AssertionError(e);}});
             assertTrue("Joined confirmation",systemClick("Done"));waitFor(scenario,"Groups");
             try(Vault joined=openVault(target)){assertEquals(2,joined.groups.size());Protocol.Group imported=joined.groups.stream().filter(g->g.id.equals(remote.id)).findFirst().orElseThrow(AssertionError::new);assertEquals(remote.members,imported.members);assertArrayEquals(remote.seed,imported.seed);assertEquals(2,joined.history.size());assertEquals("",joined.joiningRequest);assertTrue(joined.pairingUsed.contains(PairingProtocol.parseRequest(request).id));}
