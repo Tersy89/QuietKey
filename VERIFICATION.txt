@@ -1,3 +1,87 @@
+Enigma 0.4.5 development verification — 6 October 2026
+
+Private repository Tersy89/QuietKey cloned to C:/workspace/enigma; changes on
+fix/easy-join-and-receive. Existing synced sources/reference checkout untouched.
+README, SECURITY, TESTING and previous verification read before development.
+Local tools, credentials, emulator data, logs and previews remain ignored.
+
+Implemented:
+- Personal hotspot recommended; owner listener starts automatically. One short
+  QKC1 address/random-code card connects via scan or explicit Copy/Paste; manual
+  entry remains. Existing random 100-bit transport secret and signed admission/
+  import/receipt unchanged. Settings return reopens joining while unlocked.
+- Required owner Invite and recipient Join group retained; Done returns Home.
+  Exactly one other member is selected visibly; multiple recipients need a choice.
+- Separate receive controls and verified reading view with Reply. Text/file group
+  routing comes from bounded untrusted headers, then full normal cryptographic
+  verification. Wrong Starter-group selection cannot break a valid received packet.
+  Bounded whitespace normalization handles copied line wrapping. Compose guards
+  against accidentally encrypting an already encrypted packet.
+- ACTION_SEND text/binary attachment reception waits for unlock; pending encrypted
+  input survives recreation; consumed extras do not replay. Shared files use content
+  URIs with normal Android access. No trust/security change is authorized by intents.
+- QR card remains fully visible at 720x1280/density320/font1.5; actual rendered pixels
+  decode correctly. Explicit copied temporary codes marked sensitive on API33+.
+  Address chooser closes on lock; stale chooser/scanner callbacks cannot restart it.
+
+Executed evidence:
+PASS tools/dev.ps1 build on final production source: testDebugUnitTest, assembleDebug,
+     lintDebug, assembleDebugAndroidTest. .verification/build045-release.log:
+     BUILD SUCCESSFUL in 23 seconds. 91 JVM JUnit entries, zero failures/errors/skips.
+     Android lint: zero errors, 55 nonfatal warnings. Earlier build candidates passed.
+PASS tools/dev.ps1 protocol: original 21 checks; 47 Java source files parsed.
+     IncomingTextTest/ConnectionCardTest add six regression methods: joined recipient
+     routing away from Starter group, wrapped Unicode packets, authenticated private
+     recipient/signature/replay refusal, missing/malformed/oversized groups/packets,
+     legacy routing and exact small rendered QR/private endpoint/code bounds.
+     LocalJoinTest now opens first messages A-to-B and B-to-A after both exchanges.
+PASS Android disposable EnigmaTest, API35 only: full setupCameraAndNavigation,
+     92.948 seconds (.verification/android045-broad-fresh.log): password, actual camera
+     setup, automatic recipient, text/TTL/replay/history/read view, real file pickers/
+     200k restored bytes/fresh export authentication, locks, QR grant retries/removal,
+     invitation import and retained history. This candidate predates later QR caption/
+     clipboard/address-chooser lifecycle changes, which have targeted checks below.
+PASS 12-method Android default-display batch, 100.095 seconds:
+     Nearby7 + Receive3 + Keystore1 + KeystoreFile1, zero failures/skips.
+     .verification/android045-targets.log. Actual production Android TCP listener/
+     client, MainActivity approvals/import/decline, software peers and actual Keystore/
+     vault. First private message immediately after joining opens with Starter group
+     selected. Paste card and one-card scanner ActivityResult handoff connect without
+     another button. Scanner test injects decoded card, not physical camera pixels.
+     Share intent survives locked recreation, opens only after unlock, and consumed
+     intent does not replay. Receive paste persists replay state; auto-routed 200k file
+     restores exact bytes. Settings return, USB waiting/cancellation and permission
+     result simulation also checked.
+PASS 10-method Nearby7 + Receive3 batch at 720x1280/density320/font1.5,
+     93.881 seconds (.verification/android045-largefont.log), zero failures/skips.
+     Actual owner ImageView pixels decode exact card; full square is inside viewport.
+     Rendered owner and verified reading previews visually inspected.
+PASS Final-source Nearby8 at the same small display/font1.5, 73.643 seconds,
+     zero failures/skips (.verification/android045-release-nearby.log), including
+     new address-chooser lock/dismissal/stale-callback refusal and all joining cases.
+     Total 14 distinct Android test methods passed across these batches.
+PASS Root Enigma.apk matches built debug APK; APK Signature Scheme v2 verifies.
+     Same previous debug certificate, SHA256:
+     2aca54e2570fbbd3caaf35a523c8c21a19d3cf553eaf53937590905d402836b7
+     app.quietkey.debug, versionCode9, versionName0.4.5-debug; 7,572,044 bytes.
+     APK SHA256: 37B5416374A7D4670D3BBD5F147EAE76CBE88CF371E49890B71379C27006AEAF
+PASS Preserving install -r of this root APK on populated test emulator retained
+     byte-identical groups.qkv and password.qkl hashes. Display/font settings restored.
+
+Test setup notes: initial emulator was locked by its test PIN; instrumentation could
+not start until Android user storage was unlocked. The first-use UI test initially
+found the previous test vault instead of a blank installation. Only the explicitly
+identified disposable EnigmaTest app was cleared for the successful first-use run.
+No physical phone was connected, installed, cleared or reset.
+
+NOT RUN: original user's two-physical-phone failure with its exact error; physical
+S23/P30 compact-card focus/detection, hotspot routing/isolation/no-Internet connection,
+USB interoperability; physical update retention; vendor biometrics; Android16/17
+local-network enforcement. Android/software-peer passes do not establish physical
+phone interoperability. No independent security audit. Message/file crypto unchanged.
+
+Historical 0.4.4 evidence follows; APK/version/tool counts below describe that release:
+
 Enigma 0.4.4 development verification — 6 October 2026
 
 README.md, SECURITY.md, TESTING.md and VERIFICATION.txt read before development.

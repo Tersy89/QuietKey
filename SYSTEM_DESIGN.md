@@ -1,6 +1,6 @@
 # Enigma system design
 
-Version: 0.4.4 development build. Updated: 6 October 2026.
+Version: 0.4.5 development build. Updated: 6 October 2026.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
@@ -28,7 +28,8 @@ The group owner authenticates the member directory. Trusting that owner delegate
 | QrImage | Native QR rendering with normal-finder self-check and alternate mask selection |
 | QrLuma | CameraX Y-plane extraction honoring vendor row/pixel stride |
 | JoiningFlow | Fresh/resumed requests, bounded saved invitations, grant-scoped retry and pending cleanup |
-| NearbyJoinDialog | Foreground full-screen USB/hotspot setup, bounded transfer lifecycle, temporary connection code |
+| NearbyJoinDialog / ConnectionCard | Automatic foreground hotspot listener; single compact address/code card, manual fallback, bounded transfer lifecycle |
+| IncomingText | Bounded copy/paste normalization and untrusted group routing, followed by complete normal authentication |
 | UsbJoinLink | AOA host/accessory permission, re-enumeration, buffered USB data endpoints; no ADB |
 | LocalJoinWire / LocalJoinSession | Bounded ordered duplex exchange; authenticated hotspot frames; approval/receipt ordering |
 | CameraActivity | Additional live camera entropy for group creation; no saved video/audio |
@@ -68,7 +69,7 @@ Leaving Enigma locks it, clears the visible data and queues disposal of loaded s
 
 Fresh passphrase authentication is required before readable-file export, reset, password change and biometric configuration. Biometric unlock does not replace the passphrase for these actions. There is no password recovery. Android Settings can clear data for a fresh start, losing the local identity/data. No automatic wiping follows failed passwords.
 
-## Preferred USB and personal-hotspot joining
+## Personal-hotspot and USB joining
 
 ```mermaid
 sequenceDiagram
@@ -85,11 +86,13 @@ sequenceDiagram
   A->>B: Done
 ```
 
-Groups → Join group and Invite new recipient both present USB cable (preferred), Personal hotspot, then QR fallback. Nearby joining regenerates the active signed request while retaining the device identity. MainActivity owns the unlocked vault and both approval dialogs. Neither transport holds identity private keys or plaintext group secrets. Parsed candidate group secrets exist transiently in MainActivity until the recipient confirms; cancellation clears uncommitted material. Owner approval persists the member as Invited before delivery; only a verified receipt/message makes it Joined. Failed delivery or recipient decline does not undo an owner-authorized pending grant. Remove the pending member or retry a fresh request to resolve it. A commit is retained if the last confirmation is lost.
+Groups → Join group and Invite new recipient present Personal hotspot (recommended), USB cable, then QR fallback. Nearby joining regenerates the active signed request while retaining the device identity. MainActivity owns the unlocked vault and both approval dialogs. Neither transport holds identity private keys or plaintext group secrets. Parsed candidate group secrets exist transiently in MainActivity until the recipient confirms; cancellation clears uncommitted material. Owner approval persists the member as Invited before delivery; only a verified receipt/message makes it Joined. Failed delivery or recipient decline does not undo an owner-authorized pending grant. Remove the pending member or retry a fresh request to resolve it. A commit is retained if the last confirmation is lost. Done returns to Home; exactly one other member is selected automatically and visibly. Multiple possible recipients still require a choice.
 
 **USB:** UsbJoinLink polls only while the joining window is open. It can connect through either host or accessory APIs independently of owner/joiner role. A package-scoped mutable PendingIntent (API31+) preserves USB permission result extras; it uses a random action, nonexported receiver and cancellation on close. UsbManager permission is rechecked before opening endpoints. A single attached device requires Android permission, then AOA GET_PROTOCOL (51), SEND_STRING (52) and START (53); after re-enumeration it requests permission for the accessory data device. Google VID 0x18d1 / PID 0x2d00 or 0x2d01, interface zero, bulk IN/OUT are used. The optional ADB interface is never opened. The accessory side matches Enigma / Enigma Join strings, asks permission and opens duplicated file-descriptor handles. A 16-KiB buffered input accommodates entire AOA logical packets before byte-level framing; writes are chunked to 16 KiB. Disconnect, cancellation, lock and deadline close handles. A data cable/OTG host and compatible accessory mode are necessary; no USB debugging, computer, root, tethering or file-copy workaround is used. String metadata and a cable alone are not cryptographic real-world identity proof. Phone interoperability is pending physical verification.
 
-**Personal hotspot:** Configure the owner's hotspot and connect B using Android Settings. The app does not start a hotspot, scan nearby networks or join Wi-Fi itself. Returning from Open connection settings requires reopening the method. An owner address selector enumerates private IPv4 addresses on Wi-Fi/hotspot/Ethernet/tether interfaces; the owner chooses the address reachable by B. NearbyJoinDialog binds TCP port 45873 only to that address while waiting. B's address may prefill from the Wi-Fi gateway but must match A. The joining socket binds explicitly to a connected non-VPN Android Wi-Fi Network instead of relying on the default/mobile-data network. Its gateway hint comes from that network's route list. Only literal RFC1918 addresses are accepted; no hostname/public/loopback/link-local endpoint or discovery request is used. Network-state and INTERNET permissions support these local operations. The implemented app has no external network service; the INTERNET permission is not an OS-level private-network restriction. Same-private-Wi-Fi joining also works unless client isolation/routing prevents it. Mobile data/Internet connectivity is unnecessary.
+**Personal hotspot:** Configure the owner's hotspot and connect B using Android Settings. The app does not start a hotspot, discover nearby networks or join Wi-Fi itself. Returning from Open connection settings reopens the flow with a fresh request/code while the bounded unlocked handoff remains valid. Private IPv4 Wi-Fi/hotspot/Ethernet/tether interfaces are enumerated, preferring swlan/ap names. The owner listener starts automatically on the first address and TCP port 45873; Use another local address closes it and starts a fresh dialog/code bound to the chosen interface. B's manual address prefills from the Wi-Fi gateway when available. The joining socket binds explicitly to a connected non-VPN Android Wi-Fi Network instead of the default/mobile-data network. Only literal RFC1918 addresses are accepted; no hostname/public/loopback/link-local endpoint or discovery request is used. Same-private-Wi-Fi joining works unless client isolation/routing prevents it. INTERNET grants broader OS capability than these implemented private-endpoint guards.
+
+**Connection card:** QKC1:private-address:temporary-code is under 70 ASCII characters for emitted cards. It contains no identity/private/group keys. Owner shows one ordinary QR rendered by QrImage and optionally copies the exact card on explicit request. B's existing scanner accepts only a valid card and immediately returns it, without manual frame/Continue/Swap controls. MainActivity closes B's old transport, uses the bounded scanner handoff, reopens the same signed request and connects using the card. Paste connection card follows the same parser and local socket path. The existing five-minute listener lifetime and code authentication remain; the card is a connection hint/secret, not a membership grant. Owner Invite and recipient Join group still gate trust/persistence. The existing multi-frame joining fallback remains unchanged; physical-camera reliability is unverified.
 
 The temporary code is 20 independent random symbols from a 32-character unambiguous alphabet, displayed as five parts: 100-bit random secret, separate from hotspot/app passwords. SHA-256(versioned prefix + normalized code) derives a 32-byte transport key. Each Wi-Fi frame uses AES-GCM, fresh 12-byte nonce and full framing header AAD. The secret stays in RAM, is not saved/logged/autocopied and expires with the five-minute window. It authenticates code possession, so share directly only with the known recipient. USB uses the same framing without this outer code encryption; QKG2 remains recipient-encrypted on both transports. The code is not a replacement for owner approval or public-key/request/signature/lifetime verification.
 
@@ -146,18 +149,22 @@ Signatures authenticate identity; recipient encryption supplies confidentiality;
 
 Text is at most 16,000 UTF-8 bytes. The enlarged bound accommodates a directory carrier: at most 75,000 wire characters, a 40,000-byte body and a 20,000-byte header. File data is at most 50 MiB, chunked at 65,536 bytes. Chunk nonce is an eight-byte random base plus four-byte sequence index. Each chunk authenticates header/index/kind; filename and MIME metadata are encrypted. Full inspection authenticates every chunk and the whole signature before readable export. No plaintext cache file is created.
 
-Only explicit other group recipients may be selected; missing/self/unknown recipients are refused in the UI and protocol. The sender can reopen its sent copy. Group-wide broadcasts are not implemented.
+Only other group recipients may be selected. With exactly one other member, the UI selects and displays that person automatically; with several, a choice is required. Missing/self/unknown recipients are refused in the UI and protocol. The sender can reopen its sent copy. Group-wide broadcasts are not implemented.
 
 ## Storage and four tabs
 
 - Home: select group/recipient and launch sending.
 - Groups: create/join and a compact group list; each group opens details with Invite, member management, send, optional confirmation, rename and remove. Starter group replaces the misleading Personal vault label; it is not a separate personal file-storage feature.
-- Messages: combined encrypted prepared/received text/file history across groups. Prepared is not delivered/read.
+- Messages: combined encrypted prepared/received text/file history across groups. A separate receive screen offers Paste and open with no group/recipient/TTL selection. Prepared is not delivered/read.
 - Device: setup status/name, current version, updated guide, fingerprint, rename and reset. A separate Security & unlock page contains manual lock and passphrase/biometric settings.
 
 groups.qkv holds group seeds, signed directories/revisions, aliases/local blocks, replay logs, joining state and encrypted text/history metadata inside AES-GCM vault encryption. password.qkl holds the double-encrypted master-key envelope. invitationCache holds bounded recipient-encrypted joining packets inside the same vault; pendingInvites maps request IDs to admitted members, and pairingUsed retains replay tombstones. Optional biometric.qkb holds a biometric-key-encrypted alternate master envelope. files/packages holds only signed endpoint/group-encrypted file packages with opaque UUID names.
 
 Retain at most 200 message entries and 150 MiB of encrypted packages. Prune after a successful vault commit. Replay-ID logs remain separate, bounded at 100,000 per group; consumed joining history is capped at 10,000 per installation. Files shared via FileProvider are ciphertext from its nonexported encrypted-cache path, cleaned after 24 hours at next launch. Backups/device-transfer backups are disabled.
+
+IncomingText caps raw input at 100,000 characters and normalized packets at 75,000; it removes whitespace and permits only supported QKD1/2/3 or QKM1 plus URL-safe Base64. Bounded binary framing supplies an untrusted group ID. FileProtocol.groupId reads a bounded header from the capped ciphertext file. These hints select an already stored group, never create trust. DirectProtocol/Protocol/FileProtocol then perform their complete signature/key/directory/expiry/replay checks. Missing groups get a join-the-sender's-group error. Valid content is persisted before display; no partial parse shows plaintext.
+
+MainActivity accepts ACTION_SEND text/plain and application/octet-stream, with singleTop delivery. Incoming encrypted text/URI waits for vault unlock; input is bounded, files are copied within existing limits and authenticated normally. The URI must be readable through Android's granted access. Ciphertext pending across Activity recreation may be saved in instance state after format normalization; no decrypted body is saved. The intent extras are consumed to avoid reopening the same packet on recreation. Readable-file export retains fresh passphrase authentication. Compose refuses common encrypted packet prefixes to prevent accidental double encryption.
 
 ## Expiry, removal, reset and limits
 
@@ -176,6 +183,8 @@ Executed build/test evidence is recorded in VERIFICATION.txt, not inferred from 
 Planned work: reviewed ratcheting/forward secrecy; separate signing/decryption identities with explicit transition; authenticated group rekeying; dedicated personal file vault if requested; recovery design if requested; accessibility/device-size coverage; independent security audit. These are not claims about the current build.
 
 ## Change log
+
+- 0.4.5 / 6 October 2026: automatic hotspot waiting and settings-return resumption; one compact connection card with scan/paste and manual fallback; hotspot-first chooser; automatic visible two-person recipient; separate receive UI, Android share reception and bounded text/file group routing. Message cryptography and signed joining grants are unchanged. Regression checks explicitly cover Starter-group selection and first messages after joining; executed evidence and remaining phone checks are in VERIFICATION.txt.
 
 - 0.4.4 / 6 October 2026: USB-first joining, personal-hotspot alternative, QR deferred to fallback; AOA host/accessory adapter, temporary-code authenticated local frames, two-sided consent and automatic signed confirmation; foreground transport lifecycle and updated device guide.
 
