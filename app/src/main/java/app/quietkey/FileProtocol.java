@@ -116,6 +116,12 @@ public final class FileProtocol {
         return new Header(blob(in,20000));
     }
 
+    /** Routing hint only; inspect must still verify the entire package before use. */
+    static String groupId(File file)throws Exception {
+        if(file.length()>MAX_FILE_BYTES+100000 || file.length()<300)throw new SecurityException("Invalid encrypted file size");
+        try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(file)))){return readHeader(in).group;}
+    }
+
     /** Verifies the entire signature, every GCM tag, limits and final marker before any export. */
     public static Verified inspect(Protocol.Group group, File file, PublicKey ownKey, PrivateKey privateKey) throws Exception {
         live(group);

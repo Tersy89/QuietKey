@@ -47,10 +47,10 @@ public final class JoinScanActivity extends ComponentActivity {
         LinearLayout page=column();page.setBackgroundColor(BG);
         page.setOnApplyWindowInsetsListener((v,insets)->{v.setPadding(0,insets.getSystemWindowInsetTop(),0,insets.getSystemWindowInsetBottom());return insets;});
         LinearLayout toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(dp(8),0,dp(8),0);
-        toolbar.addView(button("Cancel",this::finish));toolbar.addView(text(expected.equals("QKJ1:")?"Scan 1/2":expected.equals("QKA1:")?"Confirm":"Scan 2/2",19),new LinearLayout.LayoutParams(0,-2,1));toolbar.addView(button("More",this::options));page.addView(toolbar);
+        toolbar.addView(button("Cancel",this::finish));toolbar.addView(text(expected.equals("QKC1:")?"Connect":expected.equals("QKJ1:")?"Scan 1/2":expected.equals("QKA1:")?"Confirm":"Scan 2/2",19),new LinearLayout.LayoutParams(0,-2,1));toolbar.addView(button("More",this::options));page.addView(toolbar);
         ScrollView scroll=new ScrollView(this);LinearLayout content=column();content.setPadding(dp(16),dp(8),dp(16),dp(8));scroll.addView(content);page.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         status=text("Scan the first code",18);status.setTextColor(GREEN);content.addView(status);
-        tip=text(expected.equals("QKJ1:")?"Other phone: Join group.":"Owner: show invitation codes.",14);content.addView(tip);
+        tip=text(expected.equals("QKC1:")?"Owner: show the hotspot connection card. One scan connects automatically.":expected.equals("QKJ1:")?"Other phone: Join group.":"Owner: show invitation codes.",14);content.addView(tip);
         FrameLayout preview=new FrameLayout(this){@Override protected void onMeasure(int w,int h){int side=MeasureSpec.getSize(w);super.onMeasure(w,MeasureSpec.makeMeasureSpec(side,MeasureSpec.EXACTLY));}};content.addView(preview,new LinearLayout.LayoutParams(-1,-2));
         // Same decorated preview, default framing/TextureView and AUTO focus as release 1.
         standard=new DecoratedBarcodeView(this);camera=standard.getBarcodeView();standard.getStatusView().setVisibility(View.GONE);
@@ -68,7 +68,7 @@ public final class JoinScanActivity extends ComponentActivity {
     private TextView text(String value,int size){TextView view=new TextView(this);view.setText(value);view.setTextSize(size);view.setTextColor(WHITE);view.setPadding(0,dp(8),0,dp(8));return view;}
     private Button button(String value,Runnable action){Button button=new Button(this);button.setText(value);button.setAllCaps(false);button.setMinHeight(dp(48));button.setOnClickListener(v->action.run());return button;}
     private static Map<DecodeHintType,Object> hints(){Map<DecodeHintType,Object> hints=new EnumMap<>(DecodeHintType.class);hints.put(DecodeHintType.TRY_HARDER,Boolean.TRUE);hints.put(DecodeHintType.POSSIBLE_FORMATS,Collections.singleton(BarcodeFormat.QR_CODE));hints.put(DecodeHintType.CHARACTER_SET,"UTF-8");return hints;}
-    private void options(){optionDialog=new android.app.AlertDialog.Builder(this).setTitle("Scanner options").setItems(expected.equals("QKA1:")?new String[]{torch?"Light off":"Light on","Try other scanner","Restart scan"}:new String[]{torch?"Light off":"Light on","Try other scanner","Restart scan",expected.equals("QKJ1:")?"Paste request":"Paste invitation"},(d,which)->{if(which==0){torch=!torch;applyTorch();}else if(which==1)switchCamera(!modern);else if(which==3){setResult(RESULT_OK,new Intent().putExtra("paste",true));finish();}else{stopCamera();transfer=new QrTransfer();completePacket=null;awaiting=false;success.setVisibility(View.GONE);status.setText("Scan the first code");next.setText("Waiting for code…");next.setEnabled(false);startCamera();}}).create();optionDialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);optionDialog.show();}
+    private void options(){optionDialog=new android.app.AlertDialog.Builder(this).setTitle("Scanner options").setItems(expected.equals("QKA1:")?new String[]{torch?"Light off":"Light on","Try other scanner","Restart scan"}:new String[]{torch?"Light off":"Light on","Try other scanner","Restart scan",expected.equals("QKC1:")?"Enter code instead":expected.equals("QKJ1:")?"Paste request":"Paste invitation"},(d,which)->{if(which==0){torch=!torch;applyTorch();}else if(which==1)switchCamera(!modern);else if(which==3){setResult(RESULT_OK,new Intent().putExtra("paste",true));finish();}else{stopCamera();transfer=new QrTransfer();completePacket=null;awaiting=false;success.setVisibility(View.GONE);status.setText("Scan the first code");next.setText("Waiting for code…");next.setEnabled(false);startCamera();}}).create();optionDialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);optionDialog.show();}
     private void armLegacy(){if(active&&!modern&&!awaiting&&!completed)standard.decodeSingle(new BarcodeCallback(){public void barcodeResult(BarcodeResult result){if(active&&!modern&&!awaiting)acceptFrame(result.getText());}});}
     private void startCamera(){
         if(!active||completed||awaiting||checkSelfPermission(Manifest.permission.CAMERA)!=android.content.pm.PackageManager.PERMISSION_GRANTED)return;
@@ -99,6 +99,7 @@ public final class JoinScanActivity extends ComponentActivity {
     void acceptFrame(String frame){
         if(completed||awaiting)return;
         try{
+            if(expected.equals("QKC1:")){ConnectionCard.parse(frame);completed=true;stopCamera();setResult(RESULT_OK,new Intent().putExtra("packet",frame));finish();return;}
             int before=transfer.received();String packet=transfer.add(frame);
             if(packet!=null&&!packet.startsWith(expected))throw new SecurityException("Wrong joining step");
             if(packet==null&&before==transfer.received()){status.setText("Already scanned. Ask the other phone to tap Next code.");ui.postDelayed(this::armLegacy,500);return;}

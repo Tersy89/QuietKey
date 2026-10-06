@@ -38,6 +38,9 @@ public final class LocalJoinTest {
             owner.get(10,TimeUnit.SECONDS);
         }finally{pool.shutdownNow();}
         assertEquals(1,ownerCalls.get());assertEquals(1,joinCalls.get());assertEquals(group.members,joined[0].members);assertArrayEquals(group.seed,joined[0].seed);assertEquals("Joined",group.memberStatus.get(Protocol.fingerprint(b.getPublic())));assertTrue(pending.isEmpty());assertThrows(Exception.class,()->PairingProtocol.accept(invitation[0],request,c.getPublic(),c.getPrivate()));
+        String message=DirectProtocol.encrypt(group,Protocol.fingerprint(b.getPublic()),"First message after joining",a.getPublic(),a.getPrivate());
+        assertEquals("First message after joining",DirectProtocol.decrypt(joined[0],message,b.getPublic(),b.getPrivate()).text);
+        String reply=DirectProtocol.encrypt(joined[0],Protocol.fingerprint(a.getPublic()),"Reply from B",b.getPublic(),b.getPrivate());assertEquals("Reply from B",DirectProtocol.decrypt(group,reply,a.getPublic(),a.getPrivate()).text);
     }
     @Test public void encryptedTcpJoinsAndReturnsVerifiedReceipt()throws Exception{exchange(true,false);}
     @Test public void cableStyleFragmentedDuplexJoinsAndReturnsReceipt()throws Exception{exchange(false,true);}

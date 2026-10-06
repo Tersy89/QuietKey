@@ -13,8 +13,10 @@
         <activity android:name=".SecureCaptureActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".JoinScanActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".CameraActivity" android:exported="false" android:screenOrientation="portrait" />
-        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
+        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait" android:launchMode="singleTop">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+            <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="text/plain"/></intent-filter>
+            <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="application/octet-stream"/></intent-filter>
         </activity>
     </application>
 </manifest>
