@@ -116,6 +116,11 @@ public final class FileProtocol {
         return new Header(blob(in,20000));
     }
 
+    /** Unauthenticated routing hint only: inspect() still verifies everything. */
+    public static String groupId(File file) throws Exception {
+        try (DataInputStream raw=new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) { return readHeader(raw).group; }
+    }
+
     /** Verifies the entire signature, every GCM tag, limits and final marker before any export. */
     public static Verified inspect(Protocol.Group group, File file, PublicKey ownKey, PrivateKey privateKey) throws Exception {
         live(group);

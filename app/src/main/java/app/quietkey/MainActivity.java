@@ -339,9 +339,10 @@ public final class MainActivity extends FragmentActivity {
         },wire->{render();result(wire,true,"For "+memberName(g,to)+" • "+g.name+"\n"+pretty(to));});}));
         body.addView(recipientButton("Attach a file or image",()->{page="files";render();}));
         body.addView(button("Decrypt pasted message",()->{
-            String wire=message.getText().toString();work(()->{
-                OpenedText opened=openText(g,wire);g.seen.add(opened.record.id);remember(opened.record);return opened;
-            },opened->{render();showOpenedText(opened);});
+            String wire=DirectProtocol.clean(message.getText().toString());work(()->{
+                Protocol.Group target=DirectProtocol.isPrivate(wire)?packetGroup(DirectProtocol.groupId(wire)):g;
+                OpenedText opened=openText(target,wire);target.seen.add(opened.record.id);remember(opened.record);return opened;
+            },opened->{selectPacketGroup(opened.record.group);render();showOpenedText(opened);});
         }));body.addView(button("Receive an encrypted file",()->{page="files";render();pickFile("decrypt");}));
     }
     private void ttlSelector(){
@@ -355,9 +356,13 @@ public final class MainActivity extends FragmentActivity {
         final String text;final MessageRecord record;
         OpenedText(String text,MessageRecord record){this.text=text;this.record=record;}
     }
+    /** Packets name their group, so receiving never depends on which group is selected on screen. */
+    private Protocol.Group packetGroup(String id){Protocol.Group g=group(id);if(g==null)throw new SecurityException("This was encrypted for a group that is not on this device. Join that group first, then open it again.");return g;}
+    private void selectPacketGroup(String id){Protocol.Group g=group(id);if(g!=null&&g!=selected){selected=g;chooseDefaultRecipient();}}
     private OpenedText openText(Protocol.Group g,String wire)throws Exception{
-        if(wire.trim().startsWith("QKD1:") || wire.trim().startsWith("QKD2:") || wire.trim().startsWith("QKD3:")){
-            DirectProtocol.Opened o=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());if(isOwner(g)&&!o.sender.equals(ownId))g.memberStatus.put(o.sender,"Joined");return new OpenedText(o.text,new MessageRecord(o.messageId,g.id,o.sender,o.recipient,"text",wire.trim(),"Private text",o.createdAt,o.expiresAt,false));
+        wire=DirectProtocol.clean(wire);
+        if(DirectProtocol.isPrivate(wire)){
+            DirectProtocol.Opened o=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());if(isOwner(g)&&!o.sender.equals(ownId))g.memberStatus.put(o.sender,"Joined");return new OpenedText(o.text,new MessageRecord(o.messageId,g.id,o.sender,o.recipient,"text",wire,"Private text",o.createdAt,o.expiresAt,false));
         }
         Protocol.Opened o=Protocol.decrypt(g,wire);return new OpenedText("Legacy shared-group text\n\n"+o.text,new MessageRecord(o.messageId,g.id,o.sender,ownId,"text",wire.trim(),"Legacy text",System.currentTimeMillis(),0,false));
     }
@@ -455,8 +460,8 @@ public final class MainActivity extends FragmentActivity {
                 if(in==null)throw new IOException("Could not open that file");copy(in,out,FileProtocol.MAX_FILE_BYTES+100000);
             }catch(Exception e){file.delete();throw e;}
             FileProtocol.Verified verified=null;
-            try{verified=FileProtocol.inspect(g,file,vault.publicKey(),vault.privateKey());rememberFile(g,file,verified,false);done=true;return new Object[]{file,verified};}finally{if(!done){if(verified!=null)verified.close();file.delete();}}
-        },pair->{closeVerified();encryptedFile=(File)pair[0];verifiedFile=(FileProtocol.Verified)pair[1];render();});
+            try{Protocol.Group target=packetGroup(FileProtocol.groupId(file));verified=FileProtocol.inspect(target,file,vault.publicKey(),vault.privateKey());rememberFile(target,file,verified,false);done=true;return new Object[]{file,verified,target.id};}finally{if(!done){if(verified!=null)verified.close();file.delete();}}
+        },pair->{closeVerified();encryptedFile=(File)pair[0];verifiedFile=(FileProtocol.Verified)pair[1];fileGroupId=(String)pair[2];selectPacketGroup(fileGroupId);render();});
     }
     private void fileResult(boolean decrypted) {
         if(!foreground)return;clearResult();LinearLayout card=card();card.addView(label(decrypted?(verifiedFile.previouslyOpened?"FILE VERIFIED • PREVIOUSLY OPENED":"FILE VERIFIED • READY TO RESTORE"):"FILE ENCRYPTED • READY TO SHARE",10,GREEN));

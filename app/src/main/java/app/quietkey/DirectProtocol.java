@@ -47,8 +47,17 @@ public final class DirectProtocol {
             byte[] sig=signature.sign();return "QKD3:"+Protocol.b64(pack(out->{blob(out,body);blob(out,sig);}));
         } finally {if(key!=null)Arrays.fill(key,(byte)0);Arrays.fill(secret,(byte)0);Arrays.fill(clear,(byte)0);}
     }
+    /** Messengers wrap long packets; base64url never contains whitespace. */
+    public static String clean(String wire){return wire==null?"":wire.replaceAll("\\s","");}
+    public static boolean isPrivate(String wire){wire=clean(wire);return wire.startsWith("QKD1:")||wire.startsWith("QKD2:")||wire.startsWith("QKD3:");}
+    /** Unauthenticated routing hint only: decrypt() still verifies the group, signature and GCM tag. */
+    public static String groupId(String wire)throws Exception{
+        wire=clean(wire);if(!isPrivate(wire)||wire.length()>75000)throw new SecurityException("Invalid private message");
+        DataInputStream outer=input(Protocol.un64(wire.substring(5)));DataInputStream in=input(blob(outer,40000));DataInputStream h=input(blob(in,20000));
+        h.readUTF();return h.readUTF();
+    }
     public static Opened decrypt(Protocol.Group group,String wire,PublicKey ownKey,PrivateKey privateKey) throws Exception {
-        live(group);wire=wire.trim();
+        live(group);wire=clean(wire);
         boolean v3=wire.startsWith("QKD3:"),v2=v3 || wire.startsWith("QKD2:");
         if((!v2 && !wire.startsWith("QKD1:")) || wire.length()>75000)throw new SecurityException("Invalid private message");
         DataInputStream outer=input(Protocol.un64(wire.substring(5)));byte[] body=blob(outer,40000),sig=blob(outer,256);end(outer);
