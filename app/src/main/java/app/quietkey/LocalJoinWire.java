@@ -6,11 +6,10 @@ import java.security.MessageDigest;
 import java.util.*;
 import javax.crypto.Cipher;
 
-/** Bounded, ordered joining frames. Wi-Fi uses a random one-time secret, never an app password. */
+/** Bounded, ordered joining frames, encrypted with the one-time key from the owner's QR or NFC tap. */
 public final class LocalJoinWire implements AutoCloseable {
     public static final int REQUEST=1, INVITATION=2, RECEIPT=3, DONE=4, MAX=30000;
     private static final int MAGIC=0x454A5731;
-    private static final String ALPHABET="23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
     private final DataInputStream in;
     private final DataOutputStream out;
     private final boolean owner;
@@ -20,13 +19,6 @@ public final class LocalJoinWire implements AutoCloseable {
         this.in=new DataInputStream(in);this.out=new DataOutputStream(out);this.owner=owner;
         if(key!=null&&key.length!=32)throw new IllegalArgumentException("Invalid connection key");
         this.key=key==null?null:key.clone();
-    }
-    public static String newCode(){byte[] random=Protocol.random(20);StringBuilder code=new StringBuilder();for(int i=0;i<20;i++){if(i>0&&i%4==0)code.append('-');code.append(ALPHABET.charAt(random[i]&31));}Arrays.fill(random,(byte)0);return code.toString();}
-    public static byte[] codeKey(String code)throws Exception {
-        String normalized=code.toUpperCase(Locale.ROOT).replace("-","").replace(" ","");
-        if(normalized.length()!=20)throw new IllegalArgumentException("Enter all five parts of the owner's connection code");
-        for(int i=0;i<20;i++)if(ALPHABET.indexOf(normalized.charAt(i))<0)throw new IllegalArgumentException("Check the connection code: it does not use I, O, 0 or 1");
-        return MessageDigest.getInstance("SHA-256").digest(("Enigma/local-join/code/v1:"+normalized).getBytes(StandardCharsets.US_ASCII));
     }
     public static boolean privateAddress(String address){
         if(address==null||!address.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}"))return false;
