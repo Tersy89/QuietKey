@@ -1,4 +1,4 @@
-# Enigma 0.5.0 local setup and phone testing
+# Enigma 0.6.0 local setup and phone testing
 
 Keep keys, SDK paths, device data/logs and previews local; they are ignored. Source and root APK are in the owner's private GitHub repository. VERIFICATION.txt records executed tests; SYSTEM_DESIGN.md describes the current implementation.
 
@@ -41,7 +41,7 @@ Do not run Gradle connectedDebugAndroidTest on a retained phone installation: it
 .\gradlew.bat connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.enigmaUiTest=true'
 ```
 
-The UI test covers password creation/unlock, live emulated-camera setup, tabs, explicit recipients, text TTL/replay/history, background/manual lock, fresh authentication for readable export, guide/reset cancellation, FLAG_SECURE and a 200,000-byte file through Android's actual picker. It also imports a software-owner invitation addressed to the actual Keystore identity, verifying group details/all public keys and retained history. The import uses the actual Paste invitation dialog/Continue action, with an injected clipboard-style packet typed into its field; it does not simulate two physical cameras scanning each other’s screens. It also resumes the exact stored owner invitation after Activity/vault recreation, removes the pending member and verifies cache cleanup/tombstone retention, and tests Start again plus scanner cancellation returning to instructions. Saved invitation/QR confirmation controls are now inside the invitation method chooser. QrFlowUiTest opens actual full-screen request/invitation windows, decodes their rendered ImageView pixels, requires a square QR covering at least 80% of screen width and fully visible without clipping, checks a 3.5-second hold never advances the code, clicks every Next code and verifies the separate swap/finish screens. Run it at default display settings and at 720×1280/density 320 with font scales 1.3 and 1.5. Scanner collector tests reject advancement while paused and preserve collected codes when changing cameras. QrScanTest additionally decodes every generated request/invitation frame at 960, 720, 480 and 320 pixels, then passes those decoded strings through the production scanner collector/result boundary. This verifies generated images and reassembly, not a physical camera. QR frame/protocol handling also has separate JVM tests. QrImageTest covers 24 seeded frame payloads at four native sizes, using normal finder detection; it never uses PURE_BARCODE. JoiningFlowTest exercises interrupted/cancelled/deleted grants, old uncached used IDs, wrong group/nonowner/removed member rejection, renewed requests, obsolete receipts and changed directories. QrLumaTest covers padded rows, pixel stride, offset/read-only buffers and invalid bounds. Test previews/fixtures go to the disposable emulator's Download directory.
+The UI test (EnigmaUiTest, updated for 0.6.0 but not yet re-run on the emulator) covers password creation/unlock, live emulated-camera setup, tabs, explicit recipients on Messages → Send, Send as text instead with TTL, pasted-text opening and external replay rejection, reopening from a conversation, background/manual lock clearing the draft, a 200,000-byte file sent as .enigma through Android's actual picker, saved for USB from the conversation, reopened through Receive → Open .enigma file and restored with fresh authentication, guide/reset cancellation and FLAG_SECURE. Sharing opens Android's share sheet, which locks Enigma; the test dismisses it and unlocks again. InboxTest (JVM) covers conversation grouping/order, labels, preview limits and a typed message round-tripping as a .enigma file. JoiningFlowTest, JoinBootstrapTest, LocalJoinTest and PairingProtocolTest cover joining; QrImageTest covers the single joining QR.
 
 The password-vault test checks device-bound encryption, wrong password/key/corrupt vault/envelope failures, closed-session key clearing and password replacement without changing stored groups. It is emulator-only because changing password protection disables the app's shared biometric alias.
 
@@ -58,7 +58,7 @@ These methods are skipped by the preserving phone helper. Run the full first-use
 - First use: choose/repeat at least 12 characters; toggle Show passphrase to check typing and hide it again, name device, complete five-second/60-frame camera setup. Deny/cancel camera and retry. Restart: require password before any group/history is visible; fingerprint remains stable.
 - Wrong password refuses access and delays retries; correct password unlocks. Background and screen-off lock the app and clear plaintext/drafts. Camera-setup/file-picker handoffs continue for at most two minutes; QR scanning allows at most five minutes; longer waits must require unlock and cancel stale results.
 - Change password using the current password. Old password must fail; new password preserves keys/groups/history and disables biometric unlock. In Device → Security & unlock, on a supported strong enrolled device enable biometric unlock using fresh password; verify cancel/failure does not unlock. Change enrollment and confirm password remains available.
-- Home initially has no selected recipient. Sending stays disabled until another approved member is explicitly selected, including after switching groups. Missing/self/unknown recipients must not create output.
+- Messages → Send initially has no selected recipient. Encrypt & share and Send as text instead stay disabled until another approved member is explicitly selected, including after switching groups. Missing/self/unknown recipients must not create output.
 - Send Unicode text, paste/decrypt the complete QKD3 packet. External replay fails; explicit local history reopening succeeds before expiry. Tampering fails without plaintext. TTL defaults to No expiry; exercise expiring text/files and expiry while the Save picker is open.
 - Encrypt/restore images, PDFs and arbitrary binary files; compare bytes/hash and preserve sources. Test empty, 50 MiB boundary,oversized,truncated/tampered packages. Readable export requires the current app password even after biometric unlock; saved readable copies remain outside the vault.
 - Inspect tabs, group/member names/fingerprints, history after restart, screenshot blocking, airplane mode, larger font/display and keyboard accessibility. No network connection is required for cryptography.
@@ -74,16 +74,26 @@ These methods are skipped by the preserving phone helper. Run the full first-use
 Update both phones to 0.5.0 (installs over 0.4.4; same debug signer). Owner creates a group and taps Invite new recipient. Recipient taps Groups → Join group.
 
 1. **QR, hotspot (S23 owner → P30 recipient, then reversed):** owner chooses Nearby: QR code or NFC tap and allows Nearby devices (13+) or Location (P30; Location must be on). Check the hotspot starts without opening Settings and one QR appears. Recipient chooses Scan or tap → Scan owner's code, then Connect in Android's prompt. Both screens must show the same six-digit check code; owner taps Codes match · Invite, recipient Join group. Both show success; owner shows Joined. Note whether the owner's normal Wi-Fi drops and returns.
-2. **NFC:** repeat with NFC on both phones, holding them back to back instead of scanning.
+2. **NFC (fixed in 0.6.0; 0.5.0 showed Android's "Empty tag"):** repeat with NFC on both phones, holding them back to back instead of scanning, until the check code appears. Repeat once after first opening and backing out of Scan QR code on the recipient. Neither phone may show Android's tag screen or lock Enigma. Note each phone's Android version (owner polling suppression needs Android 15+).
 3. **Same Wi-Fi:** both on the home Wi-Fi; owner chooses Nearby on the same Wi-Fi.
 4. **Messaging after joining:** send A→B and B→A text and a file in the new group; both must decrypt.
 5. **Negative cases:** scan an expired code (wait five minutes), Cancel on either phone mid-join, owner Decline, recipient Decline, deny the permission, deny Android's Connect prompt, move out of range, background/screen-off during joining. None may save a group without confirmation; the hotspot must stop afterwards.
 6. **Check-code race (optional):** with a third phone, scan the owner's QR first. The owner's check code must differ from the intended recipient's screen; Decline.
 
+## Messages 0.6.0 — priority phone checks
+
+1. Messages → Send: type a message, choose group and person, Encrypt & share → WhatsApp (or any app). On the other phone tap the received .enigma file → open with Enigma → unlock: the text shows in Enigma, from the right person and group.
+2. Send a photo the same way. It must open as a picture inside Enigma, not save to the phone. Save to device asks for the passphrase and saves where you choose.
+3. Send a PDF or other file: Enigma shows name/size and offers Save to device only.
+4. Messages → Receive → Open .enigma file from Downloads/Files works the same. Send as text instead → paste on the other phone → Receive → Open pasted text.
+5. Conversations: each person/group appears once on Messages, newest first; inside, sent items are on the right, received on the left; tapping reopens; sent items offer Share again and Save .enigma file (for USB).
+6. Expiry: send with 5 minutes; an open message closes when it expires and can no longer be opened.
+7. Background while a photo is open: Enigma locks and the photo is gone after unlock.
+
 ## Manual transfer — phone checks
 
-1. Recipient: Join group → Manual transfer: save my request file. Copy it to the owner over USB via a computer.
-2. Owner: Invite → Manual transfer: open their request file; note the check code; Invite → Save file. Copy the invitation back.
+1. Recipient: Join group → By file: save my request. Copy it to the owner over USB via a computer.
+2. Owner: Invite new recipient → By file: open their request; note the check code; Invite → Save file. Copy the invitation back.
 3. Recipient: open the owner's invitation file; the check code must match the owner's. Join; Save confirmation file; owner opens it and shows Joined.
 4. Negative: open the wrong file type, an invitation meant for another phone, a request older than five minutes, a modified file. All must be refused.
 

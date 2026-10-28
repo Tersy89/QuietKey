@@ -35,7 +35,7 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
     private final Handler ui=new Handler(Looper.getMainLooper());private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(PairingProtocol.WINDOW);
     private volatile boolean closed,committed,ended,requestSeen,started;private volatile Closeable channel;private volatile ServerSocket server;
-    private WifiManager.LocalOnlyHotspotReservation reservation;private ConnectivityManager.NetworkCallback networkCallback;private boolean readerOn;
+    private WifiManager.LocalOnlyHotspotReservation reservation;private ConnectivityManager.NetworkCallback networkCallback;private boolean readerOn,pollingQuiet;
     private volatile JoinBootstrap bootstrap;private TextView status;private LinearLayout content;
     NearbyJoinDialog(Activity activity,boolean owner,boolean sameWifi,String request,Callbacks callbacks){
         super(activity,R.style.AppTheme);this.activity=activity;this.owner=owner;this.sameWifi=sameWifi;this.request=request;this.callbacks=callbacks;
@@ -108,25 +108,49 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
     }
     private void showOwnerCode(String code){
         if(closed||ended)return;content.removeAllViews();content.addView(status);
-        status.setText("On the other phone: Groups → Join group → Scan or tap. Scan this code"+(nfc()!=null?", or hold the phones back to back.":"."));
+        status.setText("On their phone: Groups → Join group → Nearby: scan or tap. Then they tap Scan QR code and point it here"+(nfc()!=null?", or hold their phone against the back of this one.":"."));
         try{Bitmap qr=qrBitmap(code,Math.min(getContext().getResources().getDisplayMetrics().widthPixels-dp(40),dp(340)));ImageView image=new ImageView(getContext());image.setImageBitmap(qr);image.setAdjustViewBounds(true);content.addView(image,new LinearLayout.LayoutParams(-1,-2));}
         catch(Exception e){status.setText("Could not draw the joining code. Use NFC or Manual transfer.");}
-        if(nfc()!=null){JoinNfcService.serve(code);content.addView(text("NFC: ready to tap",14));}
+        if(nfc()!=null){JoinNfcService.serve(code);quietPolling();content.addView(text("NFC: ready to tap",14));}
         content.addView(text(sameWifi?"Both phones must stay on the same Wi-Fi network.":"This phone briefly runs a private hotspot with no Internet. It may leave its normal Wi-Fi until joining ends.",14));
         content.addView(text("The code works once and expires in five minutes. Only show it to the person joining.",14));
     }
 
     // ---- Recipient ----
     private void recipientChoices(){
-        status.setText("Scan the owner's joining code"+(nfc()!=null?", or hold your phone against theirs.":"."));
-        content.addView(button("Scan owner's code",callbacks::scanQr));
+        status.setText("Tap Scan QR code and point this phone at the owner's screen"+(nfc()!=null?", or hold it against the back of the owner's phone.":"."));
+        content.addView(button("Scan QR code",callbacks::scanQr));
         NfcAdapter adapter=nfc();
-        if(adapter!=null&&adapter.isEnabled()){readerOn=true;adapter.enableReaderMode(activity,this::tapped,NfcAdapter.FLAG_READER_NFC_A|NfcAdapter.FLAG_READER_NFC_B|NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK|NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS,null);content.addView(text("NFC: hold the phones back to back.",14));}
+        if(adapter!=null&&adapter.isEnabled()){startReader();content.addView(text("NFC: hold the phones back to back until the check code appears.",14));}
         else if(adapter!=null)content.addView(text("Turn on NFC in Android settings to join by tapping.",14));
+    }
+    /**
+     * Reader mode stops this phone treating the owner's phone as an "Empty tag" (Android's own tag
+     * screen would background Enigma and end joining). Android drops reader mode whenever the
+     * activity pauses, e.g. for the QR scanner, so it is re-armed on every resume while waiting.
+     */
+    private void startReader(){
+        NfcAdapter adapter=nfc();if(owner||started||closed||ended||adapter==null||!adapter.isEnabled())return;
+        try{adapter.enableReaderMode(activity,this::tapped,NfcAdapter.FLAG_READER_NFC_A|NfcAdapter.FLAG_READER_NFC_B|NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK|NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS,null);readerOn=true;}catch(Exception ignored){}
+    }
+    /** Owner on Android 15+: keep card emulation but stop polling, so the recipient's phone never opens Android's tag screen here. */
+    private void quietPolling(){
+        if(Build.VERSION.SDK_INT<35||pollingQuiet)return;NfcAdapter adapter=nfc();if(adapter==null)return;
+        try{adapter.setDiscoveryTechnology(activity,NfcAdapter.FLAG_READER_DISABLE,NfcAdapter.FLAG_LISTEN_KEEP);pollingQuiet=true;}catch(Exception ignored){}
+    }
+    private void restorePolling(){
+        if(!pollingQuiet)return;pollingQuiet=false;if(Build.VERSION.SDK_INT<35)return;
+        try{NfcAdapter a=nfc();if(a!=null)a.resetDiscoveryTechnology(activity);}catch(Exception ignored){}
+    }
+    /** MainActivity.onResume: Android forgets reader mode and discovery settings while paused. */
+    void activityResumed(){
+        if(closed||ended)return;
+        if(owner){if(bootstrap!=null&&!requestSeen&&nfc()!=null){pollingQuiet=false;quietPolling();}}
+        else if(readerOn||!started){readerOn=false;startReader();}
     }
     private void tapped(Tag tag){
         try{String code=JoinNfcService.read(IsoDep.get(tag));ui.post(()->bootstrap(code));}
-        catch(Exception e){status("NFC read failed. Hold the phones still, back to back, or scan the code.");}
+        catch(Exception e){status("NFC read failed"+(e.getMessage()==null?"":": "+e.getMessage())+". Keep both screens on and hold the phones still, back to back, or tap Scan QR code.");}
     }
     /** Called with a scanned or tapped QKB1 code. */
     void bootstrap(String code){
@@ -201,17 +225,17 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
     private void complete(){ui.post(()->{if(closed||ended)return;stopTransport();content.removeAllViews();content.addView(status);status.setText("Joined successfully. Group details and all member public keys are ready.");content.addView(button("Done",()->{dismiss();callbacks.finished();}));});}
     void failure(String message){ui.post(()->{if(closed||ended)return;stopTransport();content.removeAllViews();content.addView(status);status.setText(message);content.addView(button("Back",()->{dismiss();callbacks.finished();}));});}
     private void stopTransport(){
-        ended=true;JoinNfcService.clear();stopReader();closeConnections();
+        ended=true;JoinNfcService.clear();stopReader();restorePolling();closeConnections();
         if(reservation!=null){try{reservation.close();}catch(Exception ignored){}reservation=null;}
         if(networkCallback!=null){try{((ConnectivityManager)getContext().getSystemService(Context.CONNECTIVITY_SERVICE)).unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}networkCallback=null;}
         JoinBootstrap b=bootstrap;bootstrap=null;if(b!=null)b.clear();io.shutdownNow();callbacks.transportStopped();
     }
     private void closeConnections(){Closeable c=channel;channel=null;if(c!=null)try{c.close();}catch(IOException ignored){}ServerSocket s=server;server=null;if(s!=null)try{s.close();}catch(IOException ignored){}}
-    @Override public void close(){if(closed)return;closed=true;ui.removeCallbacksAndMessages(null);if(!ended)stopTransport();else{JoinNfcService.clear();stopReader();}}
+    @Override public void close(){if(closed)return;closed=true;ui.removeCallbacksAndMessages(null);if(!ended)stopTransport();else{JoinNfcService.clear();stopReader();restorePolling();}}
     boolean closed(){return closed||ended;}
     boolean recipient(){return !owner;}
     private LinearLayout column(){LinearLayout v=new LinearLayout(getContext());v.setOrientation(LinearLayout.VERTICAL);return v;}
     private TextView text(String value,int size){TextView v=new TextView(getContext());v.setText(value);v.setTextColor(0xffedf5ff);v.setTextSize(size);v.setPadding(0,dp(8),0,dp(8));return v;}
-    private Button button(String text,Runnable action){Button v=new Button(getContext());v.setText(text);v.setAllCaps(false);boolean primary=text.equals("Scan owner's code")||text.equals("Continue")||text.equals("Done");v.setTextColor(primary?0xff080f1d:0xffedf5ff);v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(primary?0xff4be3c1:0xff20344b));v.setOnClickListener(w->action.run());return v;}
+    private Button button(String text,Runnable action){Button v=new Button(getContext());v.setText(text);v.setAllCaps(false);boolean primary=text.equals("Scan QR code")||text.equals("Continue")||text.equals("Done");v.setTextColor(primary?0xff080f1d:0xffedf5ff);v.setBackgroundTintList(android.content.res.ColorStateList.valueOf(primary?0xff4be3c1:0xff20344b));v.setOnClickListener(w->action.run());return v;}
     private int dp(int n){return Math.round(n*getContext().getResources().getDisplayMetrics().density);}
 }

@@ -2,11 +2,11 @@
 
 Offline Android encryption for a selected member of an owner-managed group. Android 8.0/API 26+. No account or delivery backend. A temporary local hotspot (started by the app) or a manually copied file carries joining packets; Android Internet permission is used for local sockets only. The repository and APK distribution remain private.
 
-## Download 0.5.0
+## Download 0.6.0
 
 **[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Sign in, open the file and choose **Download raw**. Install it on both devices. It appears as **Enigma (test)**. This is an unaudited development prototype with no recovery; use disposable data while testing.
 
-The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both pairing devices to **0.5.0**: joining now uses one QR code or an NFC tap, or manual file transfer. USB direct transfer and multi-frame QR joining were removed. QKD3 text and file-v3 remain the current message formats.
+The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both devices to **0.6.0**: Messages is now a chat list with **Send** and **Receive**; typed messages travel as small `.enigma` files by default; received photos and text open inside the app. Joining uses one QR code or an NFC tap, or manual file transfer. QKD3 text and file-v3 remain the current message formats.
 
 ## Protect and set up your device
 
@@ -22,17 +22,17 @@ Only the owner creates the group. On that phone open **Groups → group → Invi
 
 ### Nearby: one QR code or an NFC tap (recommended)
 
-1. Owner: choose **Nearby: QR code or NFC tap**. Allow the permission Android asks for the first time (Nearby devices on Android 13+, Location on older phones, with Location turned on). Enigma starts its own private hotspot with no Internet and shows one code. No trip to Settings is needed.
-2. Recipient: choose **Scan or tap the owner's phone**, then tap **Scan owner's code**, or hold the phones back to back with NFC on. Tap **Connect** if Android asks to connect to the owner's device.
+1. Owner: choose **Nearby: scan or tap**. Allow the permission Android asks for the first time (Nearby devices on Android 13+, Location on older phones, with Location turned on). Enigma starts its own private hotspot with no Internet and shows one code. No trip to Settings is needed.
+2. Recipient: **Join group → Nearby: scan or tap**, then tap **Scan QR code**, or hold the phones back to back with NFC on (keep both screens on until the check code appears). Tap **Connect** if Android asks to connect to the owner's device.
 3. Both phones show a six-digit **check code**. Owner: tap **Codes match · Invite** only if both codes are the same. Recipient: check the code and tap **Join group**. A signed confirmation returns automatically and both screens show success.
 
 The code works once and expires after five minutes. Only show it to the person joining. Keep both apps open; Cancel, background or screen-off stops joining. The owner's phone may drop its normal Wi-Fi while the joining hotspot runs and reconnects afterwards. If both phones are already on the same private Wi-Fi, the owner can choose **Nearby on the same Wi-Fi** instead.
 
 ### Manual transfer (USB cable or any file copy)
 
-1. Recipient: **Join group → Manual transfer: save my request file**. Copy the file to the owner's phone, for example through a computer over USB cables, or use **Copy text**.
-2. Owner: **Invite new recipient → Manual transfer: open their request file**, check the device and tap **Invite**, then **Save file** for the invitation and copy it back.
-3. Recipient: **Join group → Manual transfer: open the owner's invitation file**. Compare the six-digit check code with the owner in person or on a call, then tap **Codes match · Join**. Optionally save a confirmation file for the owner (**Open their confirmation file**); the first verified message also confirms joining.
+1. Recipient: **Join group → By file: save my request**. Copy the file to the owner's phone, for example through a computer over USB cables, or use **Copy text**.
+2. Owner: **Invite new recipient → By file: open their request**, check the device and tap **Invite**, then **Save file** for the invitation and copy it back.
+3. Recipient: **Join group → By file: open the owner's invitation**. Compare the six-digit check code with the owner in person or on a call, then tap **Codes match · Join**. Optionally save a confirmation file for the owner (**By file: open their confirmation**); the first verified message also confirms joining.
 
 The files contain only a public request, an invitation encrypted for the recipient's phone, and a signed confirmation, so any transport is fine. Request files expire five minutes after they are made.
 
@@ -40,28 +40,25 @@ Private identity keys never leave the phone. Names and self-signed keys alone do
 
 The owner repeats this for each new device, up to 30 per group. Existing members receive owner-signed directory updates with new messages/files. Offline devices update when a packet reaches them. A device identity can join multiple groups, each with an independent secret.
 
-## Four tabs and sending
+## Messages: send and receive
 
-- **Home:** quickly select a group and explicitly select another verified recipient, then write a message or send a file/image. Sending stays disabled until a recipient is chosen.
-- **Groups:** create/join and choose a group. Its details contain invitations, member management, renaming and removal.
-- **Messages:** prepared and received text/files together across groups. Explicitly open an entry to decrypt it. Prepared means encrypted locally, not delivered or read.
-- **Device:** device name, app version, updated how-to guide, fingerprint, **Security & unlock**, and full reset.
+Three tabs: **Messages**, **Groups** and **Device**. Messages lists your conversations (one per person per group), newest first, with **Send** and **Receive** at the top and inside each conversation.
 
-Text and arbitrary files, including images/PDFs, are encrypted before Share/Copy/Save is offered. Choose the corresponding person in the external messenger. The sender can reopen their own copy. Missing, self or unregistered recipients are rejected by both UI and protocol.
+**Send:** type a message *or* choose a file/photo → choose the group → choose the person → **Encrypt & share**. Enigma makes a `.enigma` file that only that person can open and opens Android's share sheet, so you can send it with WhatsApp, email or anything else, or later save it for a USB copy (open the item → **Save .enigma file (for USB)**). **Send as text instead** makes a block of encrypted text to paste into a chat. Expiry is optional and defaults to none. Sharing leaves Enigma, so it locks; unlock to continue.
 
-New packets combine a fresh secret wrapped to the sender/recipient public keys with the group's secret to derive their content key. Reception needs both the endpoint private key and the correct group secret. Another member's private key plus the shared group secret cannot open A↔B private content. Signatures authenticate the sender; encryption provides confidentiality.
+**Receive:** tap the `.enigma` file in your messenger or file manager and choose **Enigma**, or use **Messages → Receive → Open .enigma file**. Enigma works out the group from the file, checks the sender's signature and opens it: photos and text are shown inside the app; other file types show their name and size. **Save to device** asks for your passphrase and writes a readable copy where you choose. Pasted encrypted text works too (**Receive → Open pasted text**). Nothing readable is written to storage unless you save it.
 
-History keeps the latest 200 encrypted entries and up to 150 MiB of encrypted file packages. Text/history metadata and group secrets are inside the encrypted vault. File packages remain encrypted in private storage. Plaintext message/file bodies are not persisted in history. Original and restored files remain at the locations you choose.
+New packets combine a fresh secret wrapped to the sender/recipient public keys with the group's secret to derive their content key. Reception needs both the endpoint private key and the correct group secret. Another member's private key plus the shared group secret cannot open A↔B private content. Signatures authenticate the sender; encryption provides confidentiality. Missing, self or unregistered recipients are rejected by both UI and protocol.
 
-## TTL and receiving
+History keeps the latest 200 encrypted entries and up to 150 MiB of encrypted file packages. Text/history metadata and group secrets are inside the encrypted vault. File packages remain encrypted in private storage. Plaintext message/file bodies are not persisted in history. Original and saved files remain at the locations you choose.
 
-Choose **Message expiry (TTL)** before encryption: **No expiry** by default, five minutes, one hour, 24 hours, seven days or 30 days. It starts at encryption, is signed/authenticated, and is capped by group expiry. Enigma checks expiry on opening, history reopening and readable-file export. Group expiry is a separate ten-year policy.
+## Expiry
 
-TTL uses device clocks. It cannot erase saved plaintext or prevent a modified recipient from bypassing expiry. It is not remote self-destruction.
+Choose **Expiry** before encryption: **No expiry** by default, five minutes, one hour, 24 hours, seven days or 30 days. It starts at encryption, is signed/authenticated, and is capped by group expiry. Enigma checks expiry on opening, reopening from a conversation and saving. An open message closes when it expires. Group expiry is a separate ten-year policy.
 
-Paste a complete received text packet; Enigma opens it in the group named inside the packet, whichever group is selected, and ignores line breaks a messenger may add. External repeated text opening is rejected after its ID is durably saved; explicitly reopening authenticated local history remains possible before expiry.
+Expiry uses device clocks. It cannot erase saved plaintext or prevent a modified recipient from bypassing expiry. It is not remote self-destruction.
 
-Open received `.enigma` files through Messages. The app verifies the complete signature and every chunk before offering **Save restored file**, which requires the app passphrase again. Files up to 50 MiB are supported; names and MIME types are encrypted. Archives may be explicitly restored again before expiry and are marked previously opened. Saving readable content places it outside Enigma's protection.
+External repeated opening of the same pasted text is rejected after its ID is durably saved; reopening it from the conversation remains possible before expiry. Files can be reopened before expiry. Files up to 50 MiB are supported; names and MIME types are encrypted.
 
 ## Removal and reset
 

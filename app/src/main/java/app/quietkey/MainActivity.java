@@ -52,7 +52,11 @@ public final class MainActivity extends FragmentActivity {
     private TextView progress,output;
     private EditText message;
     private Protocol.Group selected;
-    private String page="home",ownId,recipientId,pendingName,capturePurpose,manualAction,manualGroupId,pendingJoinExport,fileGroupId,fileRecipientId,fileAction;
+    private String chatGroup,chatMember,sendDraft="",sendName,viewTitle,viewText,incomingText;
+    private Uri sendUri,incomingUri;
+    private Bitmap viewImage;
+    private MessageRecord viewRecord;
+    private String page="messages",ownId,recipientId,pendingName,capturePurpose,manualAction,manualGroupId,pendingJoinExport,fileGroupId,fileRecipientId,fileAction;
     private boolean busy,foreground;
     private long ttlMillis,fileTtlMillis,preparedExpiresAt;
     private final ArrayList<View> recipientActions=new ArrayList<>();
@@ -72,7 +76,7 @@ public final class MainActivity extends FragmentActivity {
             pendingName=saved.getString("pendingName");capturePurpose=saved.getString("capturePurpose");
             manualAction=saved.getString("manualAction");manualGroupId=saved.getString("manualGroupId");
             fileAction=saved.getString("fileAction");fileGroupId=saved.getString("fileGroupId");fileRecipientId=saved.getString("fileRecipientId");
-            page=saved.getString("page","home");restoredGroup=saved.getString("selectedGroupId");
+            page=saved.getString("page","messages");chatGroup=saved.getString("chatGroup");chatMember=saved.getString("chatMember");restoredGroup=saved.getString("selectedGroupId");
             ttlMillis=saved.getLong("ttlMillis",0);fileTtlMillis=saved.getLong("fileTtlMillis",0);
             recipientId=saved.getString("recipientId");
         }
@@ -93,13 +97,13 @@ public final class MainActivity extends FragmentActivity {
         saveFile=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
             returnedFromHandoff();if(result.getResultCode()==RESULT_OK && result.getData()!=null && result.getData().getData()!=null){if(vault==null){try{DocumentsContract.deleteDocument(getContentResolver(),result.getData().getData());}catch(Exception ignored){}error("Unlock and choose the encrypted file again.");}else exportFile(result.getData().getData());}
         });
-        shell();lockScreen();
+        shell();lockScreen();if(saved==null)takeIntent(getIntent());
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);out.putString("pendingName",pendingName);out.putString("capturePurpose",capturePurpose);
         out.putString("manualAction",manualAction);out.putString("manualGroupId",manualGroupId);out.putString("page",page);
         out.putString("fileAction",fileAction);out.putString("fileGroupId",fileGroupId);out.putString("fileRecipientId",fileRecipientId);
-        out.putLong("ttlMillis",ttlMillis);out.putLong("fileTtlMillis",fileTtlMillis);out.putString("recipientId",recipientId);if(selected!=null)out.putString("selectedGroupId",selected.id);
+        out.putLong("ttlMillis",ttlMillis);out.putLong("fileTtlMillis",fileTtlMillis);out.putString("recipientId",recipientId);out.putString("chatGroup",chatGroup);out.putString("chatMember",chatMember);if(selected!=null)out.putString("selectedGroupId",selected.id);
     }
     private void shell() {
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(20),dp(12),dp(20),dp(12));root.setBackgroundColor(BG);
@@ -115,17 +119,17 @@ public final class MainActivity extends FragmentActivity {
     }
     private void render() {
         if(isDestroyed())return;if(vault==null){lockScreen();return;}
-        body.removeAllViews();message=null;output=null;nav.removeAllViews();recipientActions.clear();
+        body.removeAllViews();message=null;output=null;nav.removeAllViews();recipientActions.clear();if(!"viewer".equals(page))closeViewer();
         progress.setText("Working…");progress.setVisibility(busy?View.VISIBLE:View.GONE);
         if(!vault.setupCompleted){setup();return;}
-        String[] tabs={"home","messages","groups","identity"},names={"Home","Messages","Groups","Device"};
+        String[] tabs={"messages","groups","identity"},names={"Messages","Groups","Device"};
         for(int i=0;i<tabs.length;i++){
-            String tab=tabs[i];Button b=button(names[i],()->{page=tab;render();});b.setTextSize(10);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);
-            boolean active=tab.equals(page) || (tab.equals("messages") && (page.equals("files") || page.equals("compose"))) || (tab.equals("groups") && (page.equals("members") || page.equals("group-details"))) || (tab.equals("identity") && page.equals("security"));
+            String tab=tabs[i];Button b=button(names[i],()->{page=tab;render();});b.setTextSize(12);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(0,0,0,0);
+            boolean active=tab.equals(page) || (tab.equals("messages") && (page.equals("chat") || page.equals("send") || page.equals("receive") || page.equals("viewer"))) || (tab.equals("groups") && (page.equals("members") || page.equals("group-details"))) || (tab.equals("identity") && page.equals("security"));
             b.setTextColor(active?BG:MUTED);b.setBackground(shape(active?GREEN:CARD,12,0));
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(46),1);p.setMargins(dp(2),0,dp(2),0);nav.addView(b,p);
         }
-        switch(page){case "messages":messages();break;case "compose":compose();break;case "files":files();break;case "groups":groups();break;case "members":memberList();break;case "group-details":groupDetails();break;case "security":securitySettings();break;case "identity":identity();break;default:home();}
+        switch(page){case "chat":chat();break;case "send":send();break;case "receive":receive();break;case "viewer":viewer();break;case "groups":groups();break;case "members":memberList();break;case "group-details":groupDetails();break;case "security":securitySettings();break;case "identity":identity();break;default:page="messages";messages();}
         scroll.post(()->scroll.scrollTo(0,0));
     }
     private void setup() {
@@ -138,7 +142,7 @@ public final class MainActivity extends FragmentActivity {
         if(!vault.groups.isEmpty()){
             note("Your existing identity and "+vault.groups.size()+" group(s) will be kept.");
             body.addView(button("Continue with existing groups",()->{
-                String value=name.getText().toString().trim();work(()->{vault.deviceName=value.isEmpty()?"This device":value;vault.setupCompleted=true;persist();return true;},ok->{page="home";render();});
+                String value=name.getText().toString().trim();work(()->{vault.deviceName=value.isEmpty()?"This device":value;vault.setupCompleted=true;persist();return true;},ok->{page="messages";render();});
             }));
         }
 
@@ -154,14 +158,7 @@ public final class MainActivity extends FragmentActivity {
                 if(setup){vault.deviceName=name;vault.personalGroupId=group.id;vault.setupCompleted=true;vault.setupCapturedAt=System.currentTimeMillis();}
                 persist();return group;
             }finally{Arrays.fill(digest,(byte)0);}
-        },group->{selected=group;chooseDefaultRecipient();page=setup?"home":"groups";capturePurpose=null;render();});
-    }
-    private void home() {
-        title("Send privately");
-        if(selected==null){note("Create or join a group to start.");body.addView(primary("Set up a group",()->{page="groups";render();}));return;}
-        selectors();
-        body.addView(recipientButton("Write a message",()->{page="compose";render();}));
-        body.addView(recipientButton("Send a file or image",()->{page="files";render();}));
+        },group->{selected=group;chooseDefaultRecipient();page=setup?"messages":"groups";capturePurpose=null;render();});
     }
     private void identity() {
         title("About me & my device");note(vault.deviceName+" · Enigma "+BuildConfig.VERSION_NAME);
@@ -180,7 +177,7 @@ public final class MainActivity extends FragmentActivity {
         note("Biometrics unlock the app. Your passphrase is still required to change security settings, reset or export readable files.");
     }
     private void groups() {
-        title("Groups");LinearLayout actions=new LinearLayout(this);Button create=button("Create a group",this::newGroup),join=button("Join group",this::startJoining);actions.addView(create,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams jp=new LinearLayout.LayoutParams(0,-2,1);jp.setMargins(dp(8),0,0,0);actions.addView(join,jp);body.addView(actions);
+        title("Groups");body.addView(row(button("Create a group",this::newGroup),button("Join group",this::startJoining)));
         if(vault.groups.isEmpty())note("No groups yet.");
         for(Protocol.Group g:vault.groups){body.addView(button(g.name,()->{selected=g;chooseDefaultRecipient();page="group-details";render();}));note(g.members.size()+" members · "+(isOwner(g)?"You own this group":"Member"));}
     }
@@ -191,7 +188,7 @@ public final class MainActivity extends FragmentActivity {
             body.addView(primary("Invite new recipient",()->inviteInstructions(g)));
         }
         body.addView(button("Manage members ("+g.members.size()+")",()->{page="members";render();}));
-        body.addView(button("Send a message",()->{page="home";render();}));
+        body.addView(button("Send a message",()->openSend(g,null)));
         body.addView(button("Rename this group",()->editName("Group name",g.name,60,value->work(()->{g.name=value;persist();return true;},ok->render()))));
         body.addView(button("Remove group from this device",()->deleteGroup(g)));
     }
@@ -205,7 +202,8 @@ public final class MainActivity extends FragmentActivity {
     private void chooseDefaultRecipient(){recipientId=null;}
     private boolean hasRecipient(){return selected!=null && recipientId!=null && !recipientId.equals(ownId) && selected.members.containsKey(recipientId);}
     private void requireRecipient()throws Exception{if(!hasRecipient())throw new SecurityException("Choose another verified member as recipient first");DirectProtocol.recipient(selected,recipientId);}
-    private Button recipientButton(String text,Runnable action){Button b=primary(text,()->{try{requireRecipient();action.run();}catch(Exception e){error(e.getMessage());}});recipientActions.add(b);b.setEnabled(hasRecipient() && !busy);b.setAlpha(b.isEnabled()?1f:.4f);return b;}
+    private Button recipientButton(String text,Runnable action){return recipientButton(text,action,true);}
+    private Button recipientButton(String text,Runnable action,boolean main){Runnable checked=()->{try{requireRecipient();action.run();}catch(Exception e){error(e.getMessage());}};Button b=main?primary(text,checked):button(text,checked);recipientActions.add(b);b.setEnabled(hasRecipient() && !busy);b.setAlpha(b.isEnabled()?1f:.4f);return b;}
     private void refreshSendActions(){for(View b:recipientActions){b.setEnabled(hasRecipient() && !busy);b.setAlpha(b.isEnabled()?1f:.4f);}}
     private String memberName(Protocol.Group g,String id){if(id.equals(ownId))return "My device";String name=g.memberNames.get(id);return name==null?"Member "+id.substring(0,Math.min(8,id.length())):name;}
     /** Joining: nearby (single QR or NFC tap → Wi-Fi) or manual files. Message encryption is untouched by any of it. */
@@ -213,18 +211,26 @@ public final class MainActivity extends FragmentActivity {
     private void startJoining(){joiningMethods(null);}
     private void joiningMethods(Protocol.Group g){
         if(vault==null)return;if(g!=null&&!isOwner(g)){error("Only the group owner can invite");return;}
-        ArrayList<String> names=new ArrayList<>();ArrayList<Runnable> actions=new ArrayList<>();
+        ArrayList<String[]> options=new ArrayList<>();ArrayList<Runnable> actions=new ArrayList<>();
         if(g!=null){
-            names.add("Nearby: QR code or NFC tap (recommended)");actions.add(()->withJoinPermission(()->startNearby(g,false)));
-            names.add("Nearby on the same Wi-Fi");actions.add(()->startNearby(g,true));
-            names.add("Manual transfer: open their request file");actions.add(()->manualImport("invite",g));
-            names.add("Manual transfer: open their confirmation file");actions.add(()->manualImport("receipt",g));
+            options.add(new String[]{"Nearby: scan or tap","They scan the QR code this phone shows, or hold their phone to the back of this one. Uses a private hotspot."});actions.add(()->withJoinPermission(()->startNearby(g,false)));
+            options.add(new String[]{"Nearby on the same Wi-Fi","Use when both phones are already on the same private Wi-Fi."});actions.add(()->startNearby(g,true));
+            options.add(new String[]{"By file: open their request","Manual, e.g. over USB. They save a request file and copy it to this phone."});actions.add(()->manualImport("invite",g));
+            options.add(new String[]{"By file: open their confirmation","Last manual step, after they have joined."});actions.add(()->manualImport("receipt",g));
         }else{
-            names.add("Scan or tap the owner's phone (recommended)");actions.add(()->startNearby(null,false));
-            names.add("Manual transfer: save my request file");actions.add(this::manualRequest);
-            names.add("Manual transfer: open the owner's invitation file");actions.add(()->manualImport("join",null));
+            options.add(new String[]{"Nearby: scan or tap","The owner chooses Invite new recipient → Nearby: scan or tap and shows a QR code. Scan it, or hold the phones back to back."});actions.add(()->startNearby(null,false));
+            options.add(new String[]{"By file: save my request","Manual, e.g. over USB. Copy the file to the owner's phone."});actions.add(this::manualRequest);
+            options.add(new String[]{"By file: open the owner's invitation","The file the owner sent back."});actions.add(()->manualImport("join",null));
         }
-        transientDialog=new AlertDialog.Builder(this).setTitle(g==null?"Join a group":"Invite to "+g.name).setItems(names.toArray(new String[0]),(d,w)->actions.get(w).run()).setNegativeButton("Cancel",null).show();
+        choices(g==null?"Join a group":"Invite to "+g.name,options,actions);
+    }
+    /** App-styled buttons instead of a plain list, so every option looks tappable. */
+    private void choices(String heading,List<String[]> options,List<Runnable> actions){
+        ScrollView scroll=new ScrollView(this);LinearLayout list=column();list.setPadding(dp(20),dp(4),dp(20),dp(4));scroll.addView(list);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(heading).setView(scroll).setNegativeButton("Cancel",null).create();
+        for(int i=0;i<options.size();i++){Runnable action=actions.get(i);Runnable chosen=()->{dialog.dismiss();action.run();};
+            list.addView(i==0?primary(options.get(i)[0],chosen):button(options.get(i)[0],chosen));list.addView(label(options.get(i)[1],12,MUTED));}
+        transientDialog=dialog;dialog.show();
     }
     private String[] joinPermissions(){return Build.VERSION.SDK_INT>=33?new String[]{"android.permission.NEARBY_WIFI_DEVICES"}:new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION,android.Manifest.permission.ACCESS_COARSE_LOCATION};}
     /** Android gates the local-only hotspot (and on some versions Wi-Fi network requests) on this permission. */
@@ -285,7 +291,7 @@ public final class MainActivity extends FragmentActivity {
     // Manual transfer: the same signed request, recipient-encrypted invitation and signed receipt, carried as small text files (USB cable, SD card, any file transfer).
     private void manualRequest(){
         work(()->{vault.joiningRequest=JoiningFlow.request(vault.publicKey(),vault.privateKey(),vault.deviceName,vault.joiningRequest,vault.pairingUsed,false);persist();return vault.joiningRequest;},
-            request->exportJoin("enigma-join-request.txt",request,"Request saved","Copy this file to the owner's phone, for example over a USB cable through a computer. It contains only your public key and device name.\n\nThe owner opens it with Invite → Manual transfer and sends back an invitation file. Then open that here with Join group → Manual transfer: open the owner's invitation file.\n\nThe request expires five minutes after it was made. Save it again for a fresh one if needed."));
+            request->exportJoin("enigma-join-request.txt",request,"Request saved","Copy this file to the owner's phone, for example over a USB cable through a computer. It contains only your public key and device name.\n\nThe owner opens it with Invite new recipient → By file: open their request, and sends back an invitation file. Then open that here with Join group → By file: open the owner's invitation.\n\nThe request expires five minutes after it was made. Save it again for a fresh one if needed."));
     }
     private void manualImport(String action,Protocol.Group g){manualAction=action;manualGroupId=g==null?null:g.id;beginHandoff();importJoin.launch(new String[]{"text/plain","application/octet-stream","*/*"});}
     private void importedJoinFile(Uri uri){
@@ -302,7 +308,7 @@ public final class MainActivity extends FragmentActivity {
     }
     private void manualJoin(String packet){
         if(!packet.startsWith("QKG2:")){error("That is not an Enigma invitation file.");return;}
-        work(()->{if(vault.joiningRequest.isEmpty())throw new SecurityException("Save your request file first: Join group → Manual transfer: save my request file");String request=vault.joiningRequest;PairingProtocol.Request r=PairingProtocol.parseRequest(request);
+        work(()->{if(vault.joiningRequest.isEmpty())throw new SecurityException("Save your request file first: Join group → By file: save my request");String request=vault.joiningRequest;PairingProtocol.Request r=PairingProtocol.parseRequest(request);
             if(vault.pairingUsed.contains(r.id))throw new SecurityException("This request was already used. Save a fresh request file.");Protocol.Group candidate=PairingProtocol.accept(packet,request,vault.publicKey(),vault.privateKey());
             if(group(candidate.id)!=null||vault.groups.size()>=30){Arrays.fill(candidate.seed,(byte)0);throw new SecurityException("Group already exists or group limit reached; history was preserved");}
             return new Object[]{candidate,request,JoinBootstrap.manualCheckCode(request,Protocol.publicKey(candidate.members.get(candidate.owner)))};
@@ -310,7 +316,7 @@ public final class MainActivity extends FragmentActivity {
             transientDialog=new AlertDialog.Builder(this).setTitle("Join "+candidate.name+"?").setMessage("Check code\n"+check+"\n\nThe owner saw this code when inviting you. Join only if it matches what they read to you.\n\n"+candidate.members.size()+" member public keys will be added together.\n\nOwner fingerprint\n"+pretty(candidate.owner))
                 .setNegativeButton("Decline",(d,w)->Arrays.fill(candidate.seed,(byte)0)).setOnCancelListener(d->Arrays.fill(candidate.seed,(byte)0))
                 .setPositiveButton("Codes match · Join",(d,w)->work(()->commitJoin(candidate,request),receipt->{selected=candidate;chooseDefaultRecipient();page="groups";render();
-                    transientDialog=new AlertDialog.Builder(this).setTitle("Joined "+candidate.name).setMessage("Group details and member keys are ready. Your first verified message confirms joining to the owner, or save a confirmation file for them now.").setPositiveButton("Done",null).setNeutralButton("Save confirmation file",(x,y)->exportJoin("enigma-joined.txt",receipt,"Confirmation saved","Copy this file to the owner. They open it with Invite → Manual transfer: open their confirmation file.")).show();})).show();});
+                    transientDialog=new AlertDialog.Builder(this).setTitle("Joined "+candidate.name).setMessage("Group details and member keys are ready. Your first verified message confirms joining to the owner, or save a confirmation file for them now.").setPositiveButton("Done",null).setNeutralButton("Save confirmation file",(x,y)->exportJoin("enigma-joined.txt",receipt,"Confirmation saved","Copy this file to the owner. They open it with Invite new recipient → By file: open their confirmation.")).show();})).show();});
     }
     private void manualReceipt(Protocol.Group g,String packet){
         if(!packet.startsWith("QKA1:")){error("That is not an Enigma confirmation file.");return;}
@@ -337,52 +343,160 @@ public final class MainActivity extends FragmentActivity {
     }
     private void selectors() {
         if(selected==null)return;
-        body.addView(label("GROUP",10,GREEN));
+        body.addView(label("2 · GROUP",10,GREEN));
         Spinner groups=new Spinner(this);List<String> names=new ArrayList<>();for(Protocol.Group g:vault.groups)names.add(g.name);
         groups.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,names));groups.setSelection(vault.groups.indexOf(selected));
         groups.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){if(selected!=vault.groups.get(pos)){selected=vault.groups.get(pos);chooseDefaultRecipient();render();}}});body.addView(groups);
-        body.addView(label("PRIVATE RECIPIENT",10,GREEN));
-        List<String> ids=new ArrayList<>(),labels=new ArrayList<>();ids.add(null);labels.add("Choose verified recipient");for(String id:selected.members.keySet())if(!id.equals(ownId)){ids.add(id);labels.add(memberName(selected,id)+" · "+id.substring(0,8));}
+        body.addView(label("3 · TO",10,GREEN));
+        List<String> ids=new ArrayList<>(),labels=new ArrayList<>();ids.add(null);labels.add("Choose who it's for");for(String id:selected.members.keySet())if(!id.equals(ownId)){ids.add(id);labels.add(memberName(selected,id)+" · "+id.substring(0,8));}
         if(!ids.contains(recipientId))chooseDefaultRecipient();Spinner recipients=new Spinner(this);
         recipients.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));recipients.setSelection(Math.max(0,ids.indexOf(recipientId)));
         recipients.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){recipientId=ids.get(pos);refreshSendActions();}});body.addView(recipients);
-        if(ids.size()==1)note("No other verified member yet. Invite or pair with someone in Groups before sending.");
-
+        if(ids.size()==1)note("No one else is in this group yet. Invite someone from Groups first.");
     }
+    // ---- Messages: chats like a messenger. Send = message or file → group → person; Receive = open the file (or pasted text) and Enigma finds the group and sender. ----
     private void messages() {
-        title("Messages");note("All your text and files, together. Stored encrypted on this device.");
-        if(selected==null)body.addView(primary("Set up a group",()->{page="groups";render();}));
-        else{
-            body.addView(primary("New text message",()->{page="compose";render();}));
-            body.addView(button("Attach a file or image",()->{page="files";render();}));
-            body.addView(button("Open received text",()->{page="compose";render();}));
-            body.addView(button("Receive an encrypted file",()->{page="files";render();pickFile("decrypt");}));
-        }
-        showHistory();
+        title("Messages");
+        if(vault.groups.isEmpty()){note("Create or join a group to start.");body.addView(primary("Set up a group",()->{page="groups";render();}));return;}
+        body.addView(row(primary("Send",()->openSend(null,null)),button("Receive",()->{page="receive";render();})));
+        int shown=0;
+        for(Inbox.Chat c:Inbox.chats(vault.history)){Protocol.Group g=group(c.group);if(g==null)continue;shown++;MessageRecord last=c.last();
+            LinearLayout card=card();card.addView(label(memberName(g,c.member),18,WHITE));card.addView(label((last.outgoing?"You: ":"")+Inbox.label(last),14,MUTED));card.addView(label(g.name+" · "+when(last.createdAt),11,MUTED));
+            card.setClickable(true);card.setOnClickListener(v->{chatGroup=c.group;chatMember=c.member;page="chat";render();});body.addView(card);}
+        if(shown==0)note("No messages yet. Tap Send to encrypt a message or file for someone in one of your groups. Tap Receive to open one you were sent.");
+        else note("Only encrypted copies are kept: the latest 200 items / 150 MB.");
     }
-    private void compose() {
-        title("Write or receive text");body.addView(button("Back to messages",()->{page="messages";render();}));if(selected==null){body.addView(primary("Manage groups",()->{page="groups";render();}));return;}
-        selectors();Protocol.Group g=selected;
-        ttlSelector();
-        message=editor("Write privately, or paste encrypted text…",true);body.addView(message,new LinearLayout.LayoutParams(-1,dp(145)));
-        body.addView(recipientButton("Encrypt for selected member",()->{String clear=message.getText().toString(),to=recipientId;long ttl=ttlMillis;work(()->{
-            String wire=DirectProtocol.encrypt(g,to,clear,vault.publicKey(),vault.privateKey(),ttl);DirectProtocol.Opened opened=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());
-            remember(new MessageRecord(opened.messageId,g.id,ownId,to,"text",wire,"Private text",opened.createdAt,opened.expiresAt,true));return wire;
-        },wire->{render();result(wire,true,"For "+memberName(g,to)+" • "+g.name+"\n"+pretty(to));});}));
-        body.addView(recipientButton("Attach a file or image",()->{page="files";render();}));
-        body.addView(button("Decrypt pasted message",()->{
-            String wire=DirectProtocol.clean(message.getText().toString());work(()->{
-                Protocol.Group target=DirectProtocol.isPrivate(wire)?packetGroup(DirectProtocol.groupId(wire)):g;
-                OpenedText opened=openText(target,wire);target.seen.add(opened.record.id);remember(opened.record);return opened;
-            },opened->{selectPacketGroup(opened.record.group);render();showOpenedText(opened);});
-        }));body.addView(button("Receive an encrypted file",()->{page="files";render();pickFile("decrypt");}));
+    private void chat(){
+        Protocol.Group g=group(chatGroup);if(g==null||chatMember==null){page="messages";messages();return;}String who=chatMember;
+        body.addView(button("Back to messages",()->{page="messages";render();}));title(memberName(g,who));note(g.name);
+        boolean member=g.members.containsKey(who)&&!who.equals(ownId);
+        body.addView(row(primary("Send",()->openSend(g,member?who:null)),button("Receive",()->{page="receive";render();})));
+        List<MessageRecord> items=Inbox.thread(vault.history,g.id,who);for(MessageRecord r:items)body.addView(bubble(r));
+        if(items.isEmpty())note("Nothing here yet.");else note("Tap a message to open it. Sent means encrypted here; Enigma cannot confirm another app delivered it.");
+    }
+    private View bubble(MessageRecord r){
+        LinearLayout b=column();b.setPadding(dp(14),dp(10),dp(14),dp(10));b.setBackground(shape(r.outgoing?0xff12372f:CARD,16,LINE));
+        b.addView(label(Inbox.label(r),16,WHITE));b.addView(label((r.outgoing?"Sent ":"Received ")+when(r.createdAt)+(r.expiresAt>0?"\n"+expiryLabel(r.expiresAt):""),11,MUTED));
+        if(expired(r))b.setAlpha(.5f);else{b.setClickable(true);b.setOnClickListener(v->openHistory(r));}
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);p.gravity=r.outgoing?Gravity.END:Gravity.START;p.setMargins(r.outgoing?dp(48):0,dp(6),r.outgoing?0:dp(48),dp(6));b.setLayoutParams(p);b.setMinimumWidth(dp(150));return b;
+    }
+    private boolean expired(MessageRecord r){Protocol.Group g=group(r.group);long now=System.currentTimeMillis();return g==null||now>=g.expires||(r.expiresAt>0&&now>=r.expiresAt);}
+    private String when(long time){return DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(new Date(time));}
+    private void openSend(Protocol.Group g,String to){if(g!=null)selected=g;if(selected==null&&!vault.groups.isEmpty())selected=vault.groups.get(0);recipientId=to;sendUri=null;sendName=null;sendDraft="";page="send";render();}
+    private void send(){
+        body.addView(button("Back to messages",()->{page="messages";render();}));title("Send");
+        if(selected==null){body.addView(primary("Set up a group",()->{page="groups";render();}));return;}
+        body.addView(label("1 · MESSAGE OR FILE",10,GREEN));
+        if(sendUri==null){
+            message=editor("Type your message…",true);message.setText(sendDraft);
+            message.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence t,int a,int b,int c){}public void onTextChanged(CharSequence t,int a,int b,int c){}public void afterTextChanged(android.text.Editable e){sendDraft=e.toString();}});
+            body.addView(message,new LinearLayout.LayoutParams(-1,dp(140)));body.addView(button("Or choose a file or photo",()->pickFile("attach")));
+        }else{LinearLayout card=card();card.addView(label("FILE",10,GREEN));card.addView(label(sendName,16,WHITE));card.addView(button("Remove file",()->{sendUri=null;sendName=null;render();}));body.addView(card);}
+        selectors();ttlSelector();
+        body.addView(recipientButton("Encrypt & share",this::encryptAndShare));
+        if(sendUri==null)body.addView(recipientButton("Send as text instead",this::sendAsText,false));
+        note("Encrypt & share makes a .enigma file only that person can open. Send it with any app (WhatsApp, email) or copy it over USB. Send as text instead gives a block of text to paste into a chat.");
+    }
+    private void attach(Uri uri){
+        work(()->{String name="file";try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){
+                if(cursor!=null && cursor.moveToFirst()){int n=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME),s=cursor.getColumnIndex(OpenableColumns.SIZE);if(n>=0&&cursor.getString(n)!=null)name=cursor.getString(n);if(s>=0 && !cursor.isNull(s) && cursor.getLong(s)>FileProtocol.MAX_FILE_BYTES)throw new IOException("Files must be 50 MB or smaller");}}
+            return name;},name->{sendUri=uri;sendName=name;sendDraft="";page="send";render();});
+    }
+    private void encryptAndShare(){
+        Protocol.Group g=selected;String to=recipientId,name=sendName,typed=sendDraft;long ttl=ttlMillis;Uri uri=sendUri;
+        if(uri==null&&typed.trim().isEmpty()){error("Type a message or choose a file first.");return;}
+        work(()->{
+            DirectProtocol.recipient(g,to);byte[] text=uri==null?typed.getBytes(java.nio.charset.StandardCharsets.UTF_8):null;File file=cacheFile();boolean done=false;
+            try{try(InputStream in=uri==null?new ByteArrayInputStream(text):getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(file)){
+                    if(in==null)throw new IOException("Could not open that file");FileProtocol.encrypt(g,to,in,out,uri==null?Inbox.TEXT_NAME:name,uri==null?Inbox.TEXT_MIME:getContentResolver().getType(uri),vault.publicKey(),vault.privateKey(),ttl);}
+                try(FileProtocol.Verified verified=FileProtocol.inspect(g,file,vault.publicKey(),vault.privateKey())){rememberFile(g,file,verified,true);done=true;return file;}
+            }finally{if(text!=null)Arrays.fill(text,(byte)0);if(!done)file.delete();}
+        },file->{sendUri=null;sendName=null;sendDraft="";if(message!=null)message.setText("");chatGroup=g.id;chatMember=to;page="chat";render();shareEncryptedFile(file,g,to);});
+    }
+    private void sendAsText(){
+        Protocol.Group g=selected;String to=recipientId,clear=sendDraft;long ttl=ttlMillis;
+        if(clear.trim().isEmpty()){error("Type a message first.");return;}
+        work(()->{String wire=DirectProtocol.encrypt(g,to,clear,vault.publicKey(),vault.privateKey(),ttl);DirectProtocol.Opened opened=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());
+            MessageRecord r=new MessageRecord(opened.messageId,g.id,ownId,to,"text",wire,"Private text",opened.createdAt,opened.expiresAt,true);remember(r);return r;},
+            r->{sendDraft="";if(message!=null)message.setText("");chatGroup=g.id;chatMember=to;page="chat";render();shareHistory(r);});
+    }
+    private void receive(){
+        body.addView(button("Back to messages",()->{page="messages";render();}));title("Receive");
+        note("Open the .enigma file you were sent. Enigma finds the group, checks who sent it and opens it here.");
+        body.addView(primary("Open .enigma file",()->pickFile("decrypt")));
+        note("Quicker: tap the .enigma file in WhatsApp, email or Files and choose Enigma.");
+        body.addView(label("GOT A BLOCK OF TEXT INSTEAD?",10,GREEN));
+        message=editor("Paste the encrypted text here",true);body.addView(message,new LinearLayout.LayoutParams(-1,dp(110)));
+        EditText pasted=message;body.addView(button("Open pasted text",()->openPasted(pasted.getText().toString())));
+    }
+    private void openPasted(String text){
+        String wire=DirectProtocol.clean(text);if(wire.isEmpty()){error("Paste the encrypted text first.");return;}Protocol.Group fallback=selected;
+        work(()->{Protocol.Group target=DirectProtocol.isPrivate(wire)?packetGroup(DirectProtocol.groupId(wire)):fallback;if(target==null)throw new SecurityException("That is not an Enigma message.");
+                OpenedText opened=openText(target,wire);target.seen.add(opened.record.id);remember(opened.record);return opened;},
+            opened->{if(message!=null)message.setText("");showText(opened.record,opened.text);});
+    }
+    private void receiveFile(Uri uri){
+        work(()->{
+            File file=cacheFile();boolean done=false;FileProtocol.Verified verified=null;
+            try{try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(file)){if(in==null)throw new IOException("Could not open that file");copy(in,out,FileProtocol.MAX_FILE_BYTES+100000);}
+                Protocol.Group target=packetGroup(FileProtocol.groupId(file));verified=FileProtocol.inspect(target,file,vault.publicKey(),vault.privateKey());
+                MessageRecord record=rememberFile(target,file,verified,verified.sender.equals(ownId));target.seen.add(verified.messageId);persist();
+                Object preview=preview(verified);done=true;return new Object[]{file,verified,record,preview};
+            }finally{if(!done){if(verified!=null)verified.close();file.delete();}}
+        },value->showFile((File)value[0],(FileProtocol.Verified)value[1],(MessageRecord)value[2],value[3]));
+    }
+    /** Readable content for the in-app viewer stays in memory (FLAG_SECURE window); nothing readable is written to storage unless Save to device is chosen. */
+    private Object preview(FileProtocol.Verified v)throws Exception{
+        int kind=Inbox.preview(v.mime,v.name,v.size);if(kind==Inbox.OTHER)return null;
+        Plain plain=new Plain((int)Math.max(32,v.size));try{FileProtocol.restore(v,plain);return kind==Inbox.TEXT?plain.text():plain.image(2048);}finally{plain.wipe();}
+    }
+    private static final class Plain extends ByteArrayOutputStream {
+        Plain(int size){super(size);}
+        String text(){return new String(buf,0,count,java.nio.charset.StandardCharsets.UTF_8);}
+        Bitmap image(int max){BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(buf,0,count,bounds);if(bounds.outWidth<=0||bounds.outHeight<=0)return null;
+            int sample=1;while(Math.max(bounds.outWidth,bounds.outHeight)/sample>max)sample*=2;BitmapFactory.Options o=new BitmapFactory.Options();o.inSampleSize=sample;return BitmapFactory.decodeByteArray(buf,0,count,o);}
+        void wipe(){Arrays.fill(buf,(byte)0);count=0;}
+    }
+    private void showFile(File file,FileProtocol.Verified v,MessageRecord r,Object preview){
+        closeViewer();encryptedFile=file;verifiedFile=v;fileGroupId=r.group;fileRecipientId=r.recipient;preparedExpiresAt=r.expiresAt;viewRecord=r;viewTitle=Inbox.typed(v.name,v.mime)?"Message":v.name;
+        if(preview instanceof Bitmap)viewImage=(Bitmap)preview;else if(preview instanceof String)viewText=(String)preview;
+        openViewer(r);
+    }
+    private void showText(MessageRecord r,String text){closeViewer();viewRecord=r;viewTitle="Message";viewText=text;openViewer(r);}
+    private void openViewer(MessageRecord r){
+        chatGroup=r.group;chatMember=Inbox.member(r);selectPacketGroup(r.group);page="viewer";render();
+        if(r.expiresAt>0)ui.postDelayed(()->{if(viewRecord==r){page="chat";closeViewer();render();if(foreground)Toast.makeText(this,"Message expired",Toast.LENGTH_SHORT).show();}},Math.max(0,r.expiresAt-System.currentTimeMillis()));
+    }
+    private void closeViewer(){
+        viewRecord=null;viewTitle=null;viewText=null;if(viewImage!=null){viewImage.recycle();viewImage=null;}
+        closeVerified();File f=encryptedFile;encryptedFile=null;if(f!=null&&new File(getCacheDir(),"encrypted").equals(f.getParentFile()))f.delete();
+    }
+    private void viewer(){
+        MessageRecord r=viewRecord;Protocol.Group g=r==null?null:group(r.group);if(g==null){page="messages";messages();return;}String who=Inbox.member(r);
+        body.addView(button("Back to chat",()->{chatGroup=g.id;chatMember=who;page="chat";render();}));
+        title(viewTitle);note((r.outgoing?"To ":"From ")+memberName(g,who)+" · "+g.name+"\n"+when(r.createdAt)+" · "+expiryLabel(r.expiresAt)+(r.outgoing?"":"\nSender verified"));
+        if(viewImage!=null){ImageView image=new ImageView(this);image.setImageBitmap(viewImage);image.setAdjustViewBounds(true);image.setContentDescription(viewTitle);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(8),0,dp(8));body.addView(image,p);}
+        else if(viewText!=null){LinearLayout card=card();card.addView(label(viewText,17,WHITE));body.addView(card);}
+        else if(verifiedFile!=null){LinearLayout card=card();card.addView(label(verifiedFile.name,17,WHITE));card.addView(label(formatSize(verifiedFile.size)+"\nEnigma shows photos and text here. Save this file to open it with another app.",13,MUTED));body.addView(card);}
+        if(verifiedFile!=null)body.addView(viewImage==null&&viewText==null?primary("Save to device",this::saveRestored):button("Save to device",this::saveRestored));
+        if(r.outgoing&&!expired(r)){body.addView(button("Share again",()->shareHistory(r)));if(r.kind.equals("file"))body.addView(button("Save .enigma file (for USB)",()->saveEncrypted(r)));}
+        if(verifiedFile!=null)note("Save to device asks for your passphrase and writes a readable copy outside Enigma.");
+    }
+    private void saveRestored(){
+        FileProtocol.Verified v=verifiedFile;if(v==null)return;
+        reauth("Unlock to save a readable copy",()->{if(verifiedFile!=v)return;fileAction="restore";Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(v.mime==null||v.mime.isEmpty()?"application/octet-stream":v.mime).putExtra(Intent.EXTRA_TITLE,v.name);beginHandoff();saveFile.launch(intent);});
+    }
+    private void saveEncrypted(MessageRecord r){
+        try{checkHistoryPacket(r);File f=new File(historyDirectory(),r.payload);if(!f.equals(encryptedFile)){closeVerified();encryptedFile=f;}fileGroupId=r.group;fileRecipientId=r.recipient;preparedExpiresAt=r.expiresAt;fileAction="save-encrypted";
+            beginHandoff();saveFile.launch(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,(Inbox.TEXT_NAME.equals(r.name)?"message":r.name)+".enigma"));}
+        catch(Exception e){error(e.getMessage());}
     }
     private void ttlSelector(){
-        body.addView(label("MESSAGE EXPIRY (TTL)",10,GREEN));long[] values={0,300000,3600000,86400000,604800000,2592000000L};
+        body.addView(label("EXPIRY",10,GREEN));long[] values={0,300000,3600000,86400000,604800000,2592000000L};
         String[] labels={"No expiry","5 minutes","1 hour","24 hours","7 days","30 days"};Spinner ttl=new Spinner(this);ttl.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));
         int current=0;for(int i=0;i<values.length;i++)if(values[i]==ttlMillis)current=i;ttl.setSelection(current);
         ttl.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int pos,long id){ttlMillis=values[pos];}});body.addView(ttl);
-        note("Expiry starts when encrypted. It blocks later opening in Enigma; it cannot erase a copy someone already saved.");
+        note("Optional. Expiry blocks opening in Enigma after that time; it cannot erase a copy someone already saved.");
     }
     private static final class OpenedText {
         final String text;final MessageRecord record;
@@ -397,10 +511,6 @@ public final class MainActivity extends FragmentActivity {
             DirectProtocol.Opened o=DirectProtocol.decrypt(g,wire,vault.publicKey(),vault.privateKey());if(isOwner(g)&&!o.sender.equals(ownId))g.memberStatus.put(o.sender,"Joined");return new OpenedText(o.text,new MessageRecord(o.messageId,g.id,o.sender,o.recipient,"text",wire,"Private text",o.createdAt,o.expiresAt,false));
         }
         Protocol.Opened o=Protocol.decrypt(g,wire);return new OpenedText("Legacy shared-group text\n\n"+o.text,new MessageRecord(o.messageId,g.id,o.sender,ownId,"text",wire.trim(),"Legacy text",System.currentTimeMillis(),0,false));
-    }
-    private void showOpenedText(OpenedText opened){
-        result("Verified sender: "+memberName(group(opened.record.group),opened.record.sender)+"\n"+pretty(opened.record.sender)+"\n"+expiryLabel(opened.record.expiresAt)+"\n\n"+opened.text,false);
-        if(opened.record.expiresAt>0){TextView shown=output;ui.postDelayed(()->{if(output==shown){clearResult();if(foreground)Toast.makeText(this,"Message expired",Toast.LENGTH_SHORT).show();}},Math.max(0,opened.record.expiresAt-System.currentTimeMillis()));}
     }
     private String expiryLabel(long expires){return expires==0?"No message expiry":System.currentTimeMillis()>=expires?"Expired":"Expires "+DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(new Date(expires));}
     private File historyDirectory()throws IOException{File directory=new File(getFilesDir(),"packages");if(!directory.exists() && !directory.mkdirs())throw new IOException("Could not prepare encrypted history");return directory;}
@@ -424,23 +534,11 @@ public final class MainActivity extends FragmentActivity {
             MessageRecord record=new MessageRecord(verified.messageId,g.id,verified.sender,verified.recipient,"file",name,verified.name,verified.createdAt==0?System.currentTimeMillis():verified.createdAt,verified.expiresAt,outgoing);remember(record);committed=true;return record;
         }finally{if(!committed)stored.delete();}
     }
-    private void showHistory(){
-        body.addView(label("ALL MESSAGES · TEXT & FILES",16,WHITE));
-        if(vault.history.isEmpty())note("Your prepared and received encrypted messages will appear here. Older versions did not keep a message history.");
-        List<MessageRecord> records=new ArrayList<>(vault.history);Collections.reverse(records);
-        for(MessageRecord r:records){Protocol.Group g=group(r.group);if(g==null)continue;LinearLayout card=card();
-            card.addView(label((r.outgoing?"PREPARED • ":"RECEIVED • ")+g.name,10,GREEN));card.addView(label(r.kind.equals("file")?r.name:"Private text",17,WHITE));
-            card.addView(label((r.outgoing?"To "+memberName(g,r.recipient):"From "+memberName(g,r.sender))+" · "+DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT).format(new Date(r.createdAt))+"\n"+expiryLabel(r.expiresAt),12,MUTED));
-            boolean expired=System.currentTimeMillis()>=g.expires || (r.expiresAt>0 && System.currentTimeMillis()>=r.expiresAt);
-            if(!expired)card.addView(button(r.kind.equals("file")?"Open encrypted file":"Open message",()->openHistory(r)));
-            if(r.outgoing && !expired)card.addView(button("Share encrypted packet",()->shareHistory(r)));
-            body.addView(card);
-        }
-        note("Only encrypted content is retained. Latest 200 items / 150 MB of file packages. Prepared means encrypted here; Enigma cannot confirm delivery by another messenger.");
-    }
     private void openHistory(MessageRecord r){Protocol.Group g=group(r.group);if(g==null)return;
-        if(r.kind.equals("file"))work(()->FileProtocol.inspect(g,new File(historyDirectory(),r.payload),vault.publicKey(),vault.privateKey()),v->{closeVerified();verifiedFile=v;encryptedFile=new File(historyDirectory(),r.payload);fileGroupId=g.id;fileRecipientId=v.recipient;page="files";render();});
-        else work(()->{Protocol.Group view=new Protocol.Group(g.id,g.name,g.seed,g.expires,g.owner);view.members.putAll(g.members);view.memberNames.putAll(g.memberNames);view.roster=g.roster;view.rosterRevision=g.rosterRevision;view.blocked.addAll(g.blocked);view.seen.addAll(g.seen);view.seen.remove(r.id);OpenedText opened=openText(view,r.payload);if(!opened.record.id.equals(r.id))throw new SecurityException("History packet mismatch");return opened;},this::showOpenedText);
+        // The history copy must never be handed to discardResult (it deletes File results), so only Verified + preview cross threads.
+        if(r.kind.equals("file"))work(()->{FileProtocol.Verified v=FileProtocol.inspect(g,new File(historyDirectory(),r.payload),vault.publicKey(),vault.privateKey());boolean ok=false;try{Object preview=preview(v);ok=true;return new Object[]{v,preview};}finally{if(!ok)v.close();}},
+            value->showFile(new File(historyDirectory(),r.payload),(FileProtocol.Verified)value[0],r,value[1]));
+        else work(()->{Protocol.Group view=new Protocol.Group(g.id,g.name,g.seed,g.expires,g.owner);view.members.putAll(g.members);view.memberNames.putAll(g.memberNames);view.roster=g.roster;view.rosterRevision=g.rosterRevision;view.blocked.addAll(g.blocked);view.seen.addAll(g.seen);view.seen.remove(r.id);OpenedText opened=openText(view,r.payload);if(!opened.record.id.equals(r.id))throw new SecurityException("History packet mismatch");return opened;},opened->showText(r,opened.text));
     }
     private void shareHistory(MessageRecord r){Protocol.Group g=group(r.group);try{
         checkHistoryPacket(r);
@@ -448,63 +546,10 @@ public final class MainActivity extends FragmentActivity {
         else work(()->{checkHistoryPacket(r);File cached=cacheFile();boolean done=false;try{try(InputStream in=new FileInputStream(new File(historyDirectory(),r.payload));OutputStream out=new FileOutputStream(cached)){copy(in,out,FileProtocol.MAX_FILE_BYTES+100000);}checkHistoryPacket(r);done=true;return cached;}finally{if(!done)cached.delete();}},cached->{checkHistoryPacket(r);shareEncryptedFile(cached,g,r.recipient);});
     }catch(Exception e){error(e.getMessage());}}
     private void checkHistoryPacket(MessageRecord r)throws Exception{Protocol.Group g=group(r.group);if(g==null || System.currentTimeMillis()>=g.expires || !g.members.containsKey(r.recipient) || !g.members.containsKey(r.sender) || (r.expiresAt>0 && System.currentTimeMillis()>=r.expiresAt))throw new SecurityException("This packet is expired or its member is no longer trusted");}
-    private void result(String value,boolean encrypted) {
-        result(value,encrypted,null);
-    }
-    private void result(String value,boolean encrypted,String recipient) {
-        if(!foreground)return;
-        clearResult();LinearLayout card=card();card.addView(label(encrypted?"ENCRYPTED • READY TO SHARE":"DECRYPTED • SIGNATURE VERIFIED",10,GREEN));
-        if(recipient!=null)card.addView(label(recipient,13,WHITE));
-        output=label(encrypted?"Your encrypted message is ready. Use Share or Copy to deliver the complete packet.":value,15,WHITE);card.addView(output);
-        if(encrypted){MessageRecord record=null;for(MessageRecord r:vault.history)if(r.kind.equals("text") && r.payload.equals(value))record=r;MessageRecord packet=record;
-            card.addView(primary("Share encrypted message",()->{if(packet!=null)shareHistory(packet);}));card.addView(button("Copy encrypted message",()->{try{if(packet==null)throw new SecurityException("Prepare the message again");checkHistoryPacket(packet);ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);clipboard.setPrimaryClip(ClipData.newPlainText("Enigma encrypted message",value));Toast.makeText(this,"Encrypted message copied",Toast.LENGTH_SHORT).show();}catch(Exception e){error(e.getMessage());}}));}body.addView(card);
-    }
-    private void files() {
-        title("Message attachment");body.addView(button("Back to messages",()->{page="messages";render();}));note("Encrypt images, PDFs, video and other files up to 50 MB. Text and files are saved together in Messages.");
-        if(selected==null){body.addView(primary("Create or join a group",()->{page="groups";render();}));return;}
-        selectors();ttlSelector();LinearLayout card=card();card.addView(label("ANY FILE. ONE PRIVATE PACKAGE.",10,GREEN));card.addView(label("Images / documents / video / archives",17,WHITE));card.addView(label("Choose a recipient → encrypt a file → share its .enigma package. Only encrypted packages are shared.",14,MUTED));body.addView(card);
-        body.addView(recipientButton("Choose file to encrypt",()->pickFile("encrypt")));body.addView(button("Open .enigma file to decrypt",()->pickFile("decrypt")));
-        note("Decryption verifies the sender, every encrypted chunk and the full package before offering Save restored file. Saving creates a readable file in the location you choose.");
-        if(encryptedFile!=null && encryptedFile.exists() && verifiedFile==null)fileResult(false);
-        else if(verifiedFile!=null)fileResult(true);
-    }
-    private void pickFile(String action){try{if("encrypt".equals(action))requireRecipient();if(selected==null)throw new SecurityException("Choose a group first");closeVerified();encryptedFile=null;clearResult();fileGroupId=selected.id;fileRecipientId=recipientId;fileTtlMillis=ttlMillis;fileAction=action;beginHandoff();openFile.launch(new String[]{"*/*"});}catch(Exception e){error(e.getMessage());}}
+    private void pickFile(String action){fileAction=action;beginHandoff();openFile.launch(new String[]{"*/*"});}
     private File cacheFile()throws IOException {File directory=new File(getCacheDir(),"encrypted");if(!directory.exists() && !directory.mkdirs())throw new IOException("Could not prepare file storage");return File.createTempFile("enigma-",".enigma",directory);}
     private void cleanupCache(){File directory=new File(getCacheDir(),"encrypted");File[] files=directory.listFiles();if(files!=null)for(File file:files)if(file.lastModified()<System.currentTimeMillis()-86400000L)file.delete();}
-    private void pickedFile(Uri uri) {
-        Protocol.Group g=group(fileGroupId);if(g==null){error("Choose a group and file again.");return;}String action=fileAction,to=fileRecipientId;
-        if("encrypt".equals(action))work(()->{
-            if(to==null || to.equals(ownId))throw new SecurityException("Choose another verified group recipient first");DirectProtocol.recipient(g,to);
-            String name="file",mime=getContentResolver().getType(uri);
-            try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){
-                if(cursor!=null && cursor.moveToFirst()){int n=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME),s=cursor.getColumnIndex(OpenableColumns.SIZE);if(n>=0)name=cursor.getString(n);if(s>=0 && !cursor.isNull(s) && cursor.getLong(s)>FileProtocol.MAX_FILE_BYTES)throw new IOException("Files must be 50 MB or smaller");}
-            }
-            File file=cacheFile();boolean done=false;
-            try{try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(file)){
-                if(in==null)throw new IOException("Could not open that file");FileProtocol.encrypt(g,to,in,out,name,mime,vault.publicKey(),vault.privateKey(),fileTtlMillis);
-            }
-            try(FileProtocol.Verified verified=FileProtocol.inspect(g,file,vault.publicKey(),vault.privateKey())){rememberFile(g,file,verified,true);preparedExpiresAt=verified.expiresAt;done=true;return file;}
-            }finally{if(!done)file.delete();}
-        },file->{closeVerified();encryptedFile=file;render();});
-        else if("decrypt".equals(action))work(()->{
-            File file=cacheFile();boolean done=false;
-            try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(file)){
-                if(in==null)throw new IOException("Could not open that file");copy(in,out,FileProtocol.MAX_FILE_BYTES+100000);
-            }catch(Exception e){file.delete();throw e;}
-            FileProtocol.Verified verified=null;
-            try{Protocol.Group target=packetGroup(FileProtocol.groupId(file));verified=FileProtocol.inspect(target,file,vault.publicKey(),vault.privateKey());rememberFile(target,file,verified,false);done=true;return new Object[]{file,verified,target.id};}finally{if(!done){if(verified!=null)verified.close();file.delete();}}
-        },pair->{closeVerified();encryptedFile=(File)pair[0];verifiedFile=(FileProtocol.Verified)pair[1];fileGroupId=(String)pair[2];selectPacketGroup(fileGroupId);render();});
-    }
-    private void fileResult(boolean decrypted) {
-        if(!foreground)return;clearResult();LinearLayout card=card();card.addView(label(decrypted?(verifiedFile.previouslyOpened?"FILE VERIFIED • PREVIOUSLY OPENED":"FILE VERIFIED • READY TO RESTORE"):"FILE ENCRYPTED • READY TO SHARE",10,GREEN));
-        Protocol.Group preparedGroup=group(fileGroupId);
-        if(preparedGroup==null){closeVerified();encryptedFile=null;return;}
-        output=label(decrypted?verifiedFile.name+"\n"+formatSize(verifiedFile.size)+" • from "+memberName(preparedGroup,verifiedFile.sender)+"\n"+expiryLabel(verifiedFile.expiresAt):"Private .enigma package\nFor "+memberName(preparedGroup,fileRecipientId)+" • "+preparedGroup.name+"\n"+pretty(fileRecipientId)+"\n"+expiryLabel(preparedExpiresAt),16,WHITE);card.addView(output);
-        card.addView(primary(decrypted?"Save restored file":"Save encrypted file",()->{
-            Runnable save=()->{fileAction=decrypted?"restore":"save-encrypted";Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(decrypted?verifiedFile.mime:"application/octet-stream").putExtra(Intent.EXTRA_TITLE,decrypted?verifiedFile.name:encryptedFile.getName());beginHandoff();saveFile.launch(intent);};if(decrypted)reauth("Unlock to export readable file",save);else save.run();
-        }));
-        if(!decrypted)card.addView(button("Share encrypted file",()->{try{checkPreparedFile();shareEncryptedFile(encryptedFile,preparedGroup,fileRecipientId);}catch(Exception e){error(e.getMessage());}}));body.addView(card);
-    }
+    private void pickedFile(Uri uri){if("attach".equals(fileAction))attach(uri);else if("decrypt".equals(fileAction))receiveFile(uri);}
     private void shareEncryptedFile(File file,Protocol.Group g,String recipient){Uri uri=FileProvider.getUriForFile(this,getPackageName()+".files",file);Intent share=new Intent(Intent.ACTION_SEND).setType("application/octet-stream").putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);share.setClipData(ClipData.newRawUri("Enigma encrypted file",uri));startActivity(Intent.createChooser(share,"Send encrypted file to "+memberName(g,recipient)));}
     private void checkPreparedFile()throws Exception{Protocol.Group g=group(fileGroupId);if(g==null || System.currentTimeMillis()>=g.expires || fileRecipientId==null || fileRecipientId.equals(ownId) || !g.members.containsKey(fileRecipientId) || (preparedExpiresAt>0 && System.currentTimeMillis()>=preparedExpiresAt))throw new SecurityException("This file is expired or its recipient is unavailable");DirectProtocol.recipient(g,fileRecipientId);}
     private void guide(){
@@ -512,11 +557,11 @@ public final class MainActivity extends FragmentActivity {
         String[][] sections={
             {"1. Protect and set up","Set an app passphrase (12+ characters). Tap Show passphrase to check it. Name your device, then complete five seconds of camera setup."},
             {"2. Create or join a group","Owner: Groups → Create a group → open it → Invite new recipient. Recipient: Groups → Join group. Joining copies the group's secret and member keys to the new phone, encrypted so only that phone can open it."},
-            {"3. Nearby joining (recommended)","Owner: choose Nearby: QR code or NFC tap. Enigma starts a private hotspot with no Internet and shows one code. Recipient: choose Scan or tap, then scan that code or hold the phones back to back, and allow the connection if Android asks. Both phones show a six-digit check code: the owner taps Invite only if both codes match, then the recipient taps Join group. Keep both apps open; the code works once and expires after five minutes."},
-            {"4. Same Wi-Fi","If both phones are already on the same private Wi-Fi, the owner can choose Nearby on the same Wi-Fi instead. Everything else is the same."},
-            {"5. Manual transfer","For a USB cable or any file copy. Recipient: Join group → save my request file and copy it to the owner. Owner: Invite → open their request file → Invite, then save the invitation file and copy it back. Recipient: open the owner's invitation file. Compare the six-digit check code in person or on a call before tapping Join."},
-            {"6. Send text or a file","Home → choose a group → choose a recipient → Write a message or Send a file or image. Select a TTL or leave No expiry. Share the encrypted result with that person in your messenger."},
-            {"7. Read received messages","Messages → Open received text to paste a packet, or Receive an encrypted file. Local text and file history appears here. Saving a readable file requires your app passphrase; that saved copy is outside Enigma."},
+            {"3. Nearby joining (recommended)","Owner: Invite new recipient → Nearby: scan or tap. Enigma starts a private hotspot with no Internet and shows one QR code. Recipient: Join group → Nearby: scan or tap, then tap Scan QR code or hold the phones back to back, and allow the connection if Android asks. Both phones show a six-digit check code: the owner taps Invite only if both codes match, then the recipient taps Join group. Keep both apps open; the code works once and expires after five minutes."},
+            {"4. Same Wi-Fi","If both phones are already on the same private Wi-Fi, the owner can choose Nearby on the same Wi-Fi instead. The recipient still uses Nearby: scan or tap."},
+            {"5. Manual transfer","For a USB cable or any file copy. Recipient: Join group → By file: save my request, and copy it to the owner. Owner: Invite new recipient → By file: open their request → Invite, then save the invitation file and copy it back. Recipient: Join group → By file: open the owner's invitation. Compare the six-digit check code in person or on a call before tapping Join."},
+            {"6. Send","Messages → Send → type a message or choose a file → choose the group → choose the person → Encrypt & share. Enigma makes a .enigma file only they can open; send it with any app or over USB. Send as text instead makes a block of text for a chat. Expiry is optional."},
+            {"7. Receive","Tap the .enigma file in your messenger and choose Enigma, or Messages → Receive → Open .enigma file. Enigma finds the group, checks the sender and shows photos and text inside the app. Save to device asks for your passphrase; that copy is outside Enigma. Pasted text works too. Conversations are listed under Messages."},
             {"8. Unlock and reset","Device → Security & unlock enables fingerprint unlock or changes the passphrase. Backgrounding locks Enigma. Device → Reset app & delete local data requires the passphrase and typed RESET; it deletes local keys/groups/history. There is no recovery."}
         };
         for(String[] section:sections){steps.addView(label(section[0],17,GREEN));steps.addView(label(section[1],14,WHITE));}
@@ -569,12 +614,12 @@ public final class MainActivity extends FragmentActivity {
     }
     private void openedVault(Vault opened)throws Exception{
         if(!foreground){opened.close();lockScreen();return;}vault=opened;sessionLocked=false;ownId=Protocol.fingerprint(opened.publicKey());broken=false;
-        if(!opened.groups.isEmpty())selected=opened.groups.get(0);if(group(restoredGroup)!=null)selected=group(restoredGroup);chooseDefaultRecipient();render();
+        if(!opened.groups.isEmpty())selected=opened.groups.get(0);if(group(restoredGroup)!=null)selected=group(restoredGroup);chooseDefaultRecipient();render();if(opened.setupCompleted)handleIncoming();
     }
     private void lockNow(){
         stopNearby();
         session++;sessionLocked=true;handoff=false;biometricAttempt++;if(biometricPrompt!=null){biometricPrompt.cancelAuthentication();biometricPrompt=null;}if(vault==null){if(transientDialog!=null)transientDialog.dismiss();setEnabled(root,true);lockScreen();return;}Vault previous=vault;restoredGroup=selected==null?null:selected.id;vault=null;selected=null;recipientId=null;
-        if(transientDialog!=null)transientDialog.dismiss();transientDialog=null;if(message!=null)message.setText("");clearResult();FileProtocol.Verified old=verifiedFile;verifiedFile=null;encryptedFile=null;
+        if(transientDialog!=null)transientDialog.dismiss();transientDialog=null;if(message!=null)message.setText("");clearResult();sendDraft="";sendUri=null;viewRecord=null;viewTitle=null;viewText=null;if(viewImage!=null){viewImage.recycle();viewImage=null;}if("viewer".equals(page))page="chat";FileProtocol.Verified old=verifiedFile;verifiedFile=null;encryptedFile=null;
         worker.execute(()->{if(old!=null)old.close();previous.close();});if(!isDestroyed()){setEnabled(root,true);lockScreen();}
     }
     private void beginHandoff(){beginHandoff(120000);}
@@ -615,13 +660,14 @@ public final class MainActivity extends FragmentActivity {
         final int generation=session;busy=true;setEnabled(root,false);progress.setText("Working…");progress.setVisibility(View.VISIBLE);
         worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()||generation!=session){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setVisibility(View.GONE);try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed()||generation!=session)return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(e instanceof EOFException?"Incomplete encrypted message or file":e.getMessage());});}});
     }
-    private void discardResult(Object result){if(result instanceof Protocol.Group)Arrays.fill(((Protocol.Group)result).seed,(byte)0);else if(result instanceof Object[])for(Object item:(Object[])result)discardResult(item);else if(result instanceof AutoCloseable)try{((AutoCloseable)result).close();}catch(Exception ignored){}else if(result instanceof File)((File)result).delete();}
+    private void discardResult(Object result){if(result instanceof Bitmap)((Bitmap)result).recycle();else if(result instanceof Protocol.Group)Arrays.fill(((Protocol.Group)result).seed,(byte)0);else if(result instanceof Object[])for(Object item:(Object[])result)discardResult(item);else if(result instanceof AutoCloseable)try{((AutoCloseable)result).close();}catch(Exception ignored){}else if(result instanceof File)((File)result).delete();}
     private void setEnabled(View view,boolean enabled){view.setEnabled(enabled);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)setEnabled(group.getChildAt(i),enabled);}}
     private void error(String text){if(!isDestroyed())transientDialog=new AlertDialog.Builder(this).setTitle("Action could not be completed").setMessage(text==null?"Invalid or unsupported encrypted data":text).setPositiveButton("OK",null).show();}
     private interface NameAction{void run(String value);}
     private void editName(String title,String initial,int max,NameAction action){EditText name=editor(title,false);name.setText(initial);limit(name,max);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(name).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("Enter a name");return;}dialog.dismiss();action.run(value);}));transientDialog=dialog;dialog.show();}
     private void limit(EditText field,int max){field.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(max)});}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
+    private LinearLayout row(View left,View right){LinearLayout row=new LinearLayout(this);LinearLayout.LayoutParams a=new LinearLayout.LayoutParams(0,-2,1),b=new LinearLayout.LayoutParams(0,-2,1);a.setMargins(0,dp(6),0,dp(4));b.setMargins(dp(8),dp(6),0,dp(4));row.addView(left,a);row.addView(right,b);return row;}
     private LinearLayout column(){LinearLayout view=new LinearLayout(this);view.setOrientation(LinearLayout.VERTICAL);return view;}
     private TextView label(String text,int size,int color){TextView view=new TextView(this);view.setText(text);view.setTextSize(size);view.setTextColor(color);view.setPadding(0,dp(5),0,dp(5));return view;}
     private void title(String text){TextView view=label(text,27,WHITE);view.setTypeface(null,Typeface.BOLD);body.addView(view);}
@@ -639,7 +685,20 @@ public final class MainActivity extends FragmentActivity {
         ShieldView(Context context,boolean ready){super(context);this.ready=ready;setContentDescription(ready?"Encryption ready shield":"Device setup shield");}
         @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);float x=getWidth()/2f,y=getHeight()/2f,r=dp(69);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(dp(1));paint.setColor(LINE);canvas.drawCircle(x,y,r,paint);canvas.drawCircle(x,y,r-dp(9),paint);paint.setStrokeWidth(dp(3));paint.setColor(ready?GREEN:MUTED);canvas.drawArc(x-r,y-r,x+r,y+r,-88,ready?340:210,false,paint);Path path=new Path();path.moveTo(x,y-dp(43));path.lineTo(x+dp(34),y-dp(29));path.lineTo(x+dp(30),y+dp(9));path.quadTo(x+dp(24),y+dp(33),x,y+dp(47));path.quadTo(x-dp(24),y+dp(33),x-dp(30),y+dp(9));path.lineTo(x-dp(34),y-dp(29));path.close();paint.setStyle(Paint.Style.FILL);paint.setColor(0xff12372f);canvas.drawPath(path,paint);paint.setStyle(Paint.Style.STROKE);paint.setColor(GREEN);paint.setStrokeWidth(dp(2));canvas.drawPath(path,paint);canvas.drawArc(x-dp(10),y-dp(20),x+dp(10),y+dp(2),180,180,false,paint);paint.setStyle(Paint.Style.FILL);canvas.drawRoundRect(x-dp(15),y-dp(5),x+dp(15),y+dp(19),dp(4),dp(4),paint);paint.setColor(BG);canvas.drawCircle(x,y+dp(5),dp(3),paint);canvas.drawRect(x-dp(1),y+dp(5),x+dp(1),y+dp(12),paint);}
     }
-    @Override protected void onResume(){super.onResume();foreground=true;if(handoff && (SystemClock.elapsedRealtime()>handoffUntil || ((android.app.KeyguardManager)getSystemService(KEYGUARD_SERVICE)).isKeyguardLocked()))lockNow();if(vault==null)lockScreen();}
+    @Override protected void onResume(){super.onResume();foreground=true;if(handoff && (SystemClock.elapsedRealtime()>handoffUntil || ((android.app.KeyguardManager)getSystemService(KEYGUARD_SERVICE)).isKeyguardLocked()))lockNow();if(vault==null)lockScreen();else if(nearbyJoin!=null&&!nearbyJoin.closed())nearbyJoin.activityResumed();}
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);takeIntent(intent);if(vault!=null&&vault.setupCompleted&&!busy)handleIncoming();}
+    /** A .enigma file or text packet opened or shared from another app; handled after unlock. Only content:// from other apps is read. */
+    @SuppressWarnings("deprecation")
+    private void takeIntent(Intent intent){
+        if(intent==null)return;String action=intent.getAction();Uri uri=null;
+        if(Intent.ACTION_VIEW.equals(action))uri=intent.getData();
+        else if(Intent.ACTION_SEND.equals(action)){Object stream=intent.getParcelableExtra(Intent.EXTRA_STREAM);if(stream instanceof Uri)uri=(Uri)stream;else{CharSequence text=intent.getCharSequenceExtra(Intent.EXTRA_TEXT);if(text!=null&&text.length()<=80000){incomingText=text.toString();incomingUri=null;}}}
+        if(uri!=null&&"content".equals(uri.getScheme())&&!(getPackageName()+".files").equals(uri.getAuthority())){incomingUri=uri;incomingText=null;}
+    }
+    private void handleIncoming(){
+        Uri uri=incomingUri;String text=incomingText;incomingUri=null;incomingText=null;
+        if(uri!=null){fileAction="decrypt";receiveFile(uri);}else if(text!=null){page="receive";render();openPasted(text);}
+    }
     @Override protected void onPause(){foreground=false;super.onPause();if(message!=null)message.setText("");clearResult();if(!handoff)lockNow();}
     @Override protected void onDestroy(){stopNearby();unregisterReceiver(screenLock);Vault previous=vault;vault=null;if(previous!=null)worker.execute(previous::close);FileProtocol.Verified pending=verifiedFile;verifiedFile=null;if(pending!=null)worker.execute(pending::close);worker.shutdown();super.onDestroy();}
 }

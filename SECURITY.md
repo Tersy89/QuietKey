@@ -1,4 +1,4 @@
-# Enigma 0.5.0 security model
+# Enigma 0.6.0 security model
 
 Development prototype, not independently audited. See SYSTEM_DESIGN.md for implemented architecture/formats and VERIFICATION.txt for executed evidence. SECURITY_REVIEW.md records the historical 0.3 findings; new 0.4 formats correct the independent group-secret requirement.
 
@@ -89,7 +89,13 @@ Text replay IDs are committed before display, bounded at 100,000 per group witho
 
 TTL defaults to No expiry; options are five minutes, one hour, 24 hours, seven days and 30 days, clamped to separate group expiry. Signed/GCM timestamps are checked on text opening/history reopening/file inspection and again before readable export. now >= expiry refuses access; timestamps more than five minutes ahead are rejected. TTL uses local clocks, cannot recall saved plaintext, and can be bypassed by modified recipients with retained secrets.
 
-File restoration streams directly to the chosen provider after verification and fresh authentication. Failure requests deletion of the partial destination; the provider may retain copies or fail deletion. Selecting cloud storage can upload readable content. Original, shared and restored files outside the app are not encrypted/deleted by Enigma. Visible packet metadata includes group ID, sender/recipient fingerprints, timing fields and approximate size; the external carrier knows delivery contacts/timing. No padding or transport-metadata protection.
+In-app viewing (0.6.0): after full package verification and a durable replay-ID commit, images up to 25 MiB and text up to 1 MiB are restored into a pre-sized in-memory buffer that is zeroed after decoding; the resulting Bitmap/String stays in the FLAG_SECURE window only while the viewer is open and is released on navigation, expiry or lock. Nothing readable is written to app storage or cache. Image decoding uses Android's BitmapFactory on authenticated content from a verified group member; a malicious member could still target decoder bugs, as with any image viewer. Viewing does not ask for the passphrase again (the session is already unlocked, as for text); writing a readable copy does.
+
+Opening from other apps (0.6.0): MainActivity accepts ACTION_VIEW and ACTION_SEND for application/octet-stream, *.enigma content URIs and text/plain. Only content:// URIs from other apps are read (file:// and Enigma's own FileProvider are ignored), and only after unlock; the content goes through the same bounded copy and full verification as a picked file, so a hostile app can at most cause an error.
+
+NFC joining (0.6.0): the recipient re-arms reader mode on every resume while waiting, and the owner disables its own NFC polling on Android 15+ while serving the code, so neither phone opens Android's tag screen (which would background and lock Enigma). This changes reliability only; QKB1 contents and protection are unchanged.
+
+File restoration to a chosen location streams directly to the provider after verification and fresh authentication. Failure requests deletion of the partial destination; the provider may retain copies or fail deletion. Selecting cloud storage can upload readable content. Original, shared and restored files outside the app are not encrypted/deleted by Enigma. Visible packet metadata includes group ID, sender/recipient fingerprints, timing fields and approximate size; the external carrier knows delivery contacts/timing. No padding or transport-metadata protection.
 
 ## Removal and reset
 

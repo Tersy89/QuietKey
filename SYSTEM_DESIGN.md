@@ -1,6 +1,6 @@
 # Enigma system design
 
-Version: 0.5.0 development build. Updated: 28 October 2026.
+Version: 0.6.0 development build. Updated: 28 October 2026.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
@@ -16,7 +16,8 @@ The group owner authenticates the member directory. Trusting that owner delegate
 
 | Component | Responsibility |
 |---|---|
-| MainActivity (FragmentActivity) | Four-tab UI, locked/unlocked session, guided joining, encrypted history, external document/share workflows |
+| MainActivity (FragmentActivity) | Three-tab UI (Messages, Groups, Device), locked/unlocked session, guided joining, conversations, send/receive, in-memory viewer, external document/share/open workflows |
+| Inbox | Pure-Java conversation grouping (group + other member), typed-message file naming and in-app preview classification |
 | Vault | Atomic encrypted group/configuration/history storage; loaded secrets live only in an unlocked session |
 | PasswordLock / PasswordCipher | Device-bound, password-encrypted vault-key envelope; optional biometric envelope |
 | Protocol | Identity, group generation, crypto primitives and retained older formats |
@@ -94,13 +95,13 @@ sequenceDiagram
 
 ### Owner side
 
-Groups → group → Invite new recipient offers: **Nearby: QR code or NFC tap** (recommended), **Nearby on the same Wi-Fi**, **Manual transfer: open their request file** and **Manual transfer: open their confirmation file**. Nearby asks for ACCESS_FINE_LOCATION+COARSE (API 26–32, maxSdkVersion 32) or NEARBY_WIFI_DEVICES with neverForLocation (33+) only when chosen, then NearbyJoinDialog calls WifiManager.startLocalOnlyHotspot. SSID/passphrase/security come from the reservation (SoftApConfiguration on 30+, WifiConfiguration before). The hotspot address is the private IPv4 that appears on a Wi-Fi/AP interface after start (polled up to six seconds; falls back to an address ending .1). Same-Wi-Fi mode uses the current Wi-Fi network's link address. A ServerSocket binds to that address only on port 45873 (ephemeral if busy) before QKB1 is built with the bound port.
+Groups → group → Invite new recipient offers, as app-styled buttons with one-line explanations: **Nearby: scan or tap** (recommended), **Nearby on the same Wi-Fi**, **By file: open their request** and **By file: open their confirmation**. Nearby asks for ACCESS_FINE_LOCATION+COARSE (API 26–32, maxSdkVersion 32) or NEARBY_WIFI_DEVICES with neverForLocation (33+) only when chosen, then NearbyJoinDialog calls WifiManager.startLocalOnlyHotspot. SSID/passphrase/security come from the reservation (SoftApConfiguration on 30+, WifiConfiguration before). The hotspot address is the private IPv4 that appears on a Wi-Fi/AP interface after start (polled up to six seconds; falls back to an address ending .1). Same-Wi-Fi mode uses the current Wi-Fi network's link address. A ServerSocket binds to that address only on port 45873 (ephemeral if busy) before QKB1 is built with the bound port.
 
-QKB1 ("bootstrap-v1", about 250 characters) contains mode, SSID, passphrase, security type, IPv4, port, KEK, owner fingerprint and expiry (five minutes). It is rendered as one QR (QrImage self-checked mask) and published to JoinNfcService. The listener allows at most five failed initial connections with ten-second reads, accepts one verified request, clears the NFC payload, shows the check code in the Invite consent dialog and proceeds only on **Codes match · Invite**. JoiningFlow.invite persists the Invited grant before sending QKG2. The hotspot reservation, listener and KEK are released on success, Cancel, failure, lock or the five-minute deadline.
+QKB1 ("bootstrap-v1", about 250 characters) contains mode, SSID, passphrase, security type, IPv4, port, KEK, owner fingerprint and expiry (five minutes). It is rendered as one QR (QrImage self-checked mask) and published to JoinNfcService. On Android 15+ the owner also calls NfcAdapter.setDiscoveryTechnology(FLAG_READER_DISABLE, FLAG_LISTEN_KEEP) while the code is shown (reset on every exit), so its own NFC poller cannot read the recipient phone and open Android's "Empty tag" screen, which would background and lock Enigma. The listener allows at most five failed initial connections with ten-second reads, accepts one verified request, clears the NFC payload, shows the check code in the Invite consent dialog and proceeds only on **Codes match · Invite**. JoiningFlow.invite persists the Invited grant before sending QKG2. The hotspot reservation, listener and KEK are released on success, Cancel, failure, lock or the five-minute deadline.
 
 ### Recipient side
 
-Groups → Join group offers **Scan or tap the owner's phone** (recommended), **Manual transfer: save my request file** and **Manual transfer: open the owner's invitation file**. Nearby creates a fresh signed QKJ1, then accepts QKB1 from the ZXing ScanContract (SecureCaptureActivity, FLAG_SECURE, five-minute handoff) or from NFC reader mode (IsoDep select of AID F0454E49474D4101, then chunked reads). After parsing it shows the check code. Hotspot mode on API 29+ uses WifiNetworkSpecifier + ConnectivityManager.requestNetwork (no Internet capability, 60-second timeout, 90-second handoff for the system prompt); API 26–28 shows the SSID/passphrase for manual connection. Same-Wi-Fi mode uses the current Wi-Fi network. The socket is bound to that Network and connects to the QKB1 address, then the network's private gateway. LocalJoinSession runs request → invitation → receipt → done. The accept callback verifies QKG2, requires the QKB1 owner, then shows the check code and owner fingerprint for **Join group**.
+Groups → Join group offers **Nearby: scan or tap** (recommended), **By file: save my request** and **By file: open the owner's invitation**; the nearby screen's button is **Scan QR code**, matching the owner's on-screen instructions. Nearby creates a fresh signed QKJ1, then accepts QKB1 from the ZXing ScanContract (SecureCaptureActivity, FLAG_SECURE, five-minute handoff) or from NFC reader mode (IsoDep select of AID F0454E49474D4101, then chunked reads). Android disables reader mode whenever the activity pauses (for example the QR scanner); MainActivity.onResume re-arms it while the recipient is still waiting, otherwise the phone would read the owner as an "Empty tag" (fixed in 0.6.0 after phone testing). After parsing it shows the check code. Hotspot mode on API 29+ uses WifiNetworkSpecifier + ConnectivityManager.requestNetwork (no Internet capability, 60-second timeout, 90-second handoff for the system prompt); API 26–28 shows the SSID/passphrase for manual connection. Same-Wi-Fi mode uses the current Wi-Fi network. The socket is bound to that Network and connects to the QKB1 address, then the network's private gateway. LocalJoinSession runs request → invitation → receipt → done. The accept callback verifies QKG2, requires the QKB1 owner, then shows the check code and owner fingerprint for **Join group**.
 
 ### Manual file transfer
 
@@ -140,12 +141,18 @@ Only explicit other group recipients may be selected; missing/self/unknown recip
 
 Received text (QKD1–3) and .enigma files name their group in the header. MainActivity reads that unauthenticated group ID only to choose which local group to verify against (DirectProtocol.groupId / FileProtocol.groupId), then performs the full signature, directory, expiry and GCM verification in that group. The selected group on screen no longer matters, and an unknown group gives a clear "join that group first" error. Pasted text has all whitespace removed first, since messengers wrap long packets and base64url contains none.
 
-## Storage and four tabs
+## Messages, conversations and the in-app viewer
 
-- Home: select group/recipient and launch sending.
-- Groups: create/join and a compact group list; each group opens details with Invite, member management, send, optional confirmation, rename and remove. Starter group replaces the misleading Personal vault label; it is not a separate personal file-storage feature.
-- Messages: combined encrypted prepared/received text/file history across groups. Prepared is not delivered/read.
+Implemented in 0.6.0:
+
+- Tabs: Messages (default), Groups, Device. Messages lists conversations built by Inbox.chats from encrypted history: one per (group, other member), newest first; each conversation shows its items oldest first as bubbles. Send and Receive appear at the top of Messages and in each conversation.
+- Send: (1) type a message or choose a file/photo (ACTION_OPEN_DOCUMENT; 50 MiB limit checked from the provider size), (2) group, (3) recipient, optional expiry, then **Encrypt & share**. A typed message is encrypted with the unchanged file-v3 format (FileProtocol) as name "message.txt", MIME text/plain; any file keeps its own name/MIME. The package is verified, stored in history and offered through the share sheet. **Send as text instead** produces the unchanged QKD3 text packet. Sending from a conversation preselects its group and person.
+- Receive: **Open .enigma file**, or Android ACTION_VIEW/ACTION_SEND into MainActivity (content:// only, never Enigma's own FileProvider; text up to 80,000 characters), handled only after unlock and setup. Routing still uses the packet's group (FileProtocol.groupId / DirectProtocol.groupId) and full verification. Pasted text remains available.
+- Viewer: after FileProtocol.inspect verifies the whole package, the message ID is committed to the group's seen log and the vault is saved, then FileProtocol.restore writes into a pre-sized in-memory buffer only when Inbox.preview allows it: JPEG/PNG/WebP/GIF/BMP/HEIC up to 25 MiB (decoded with power-of-two subsampling to at most 2048 px) or text up to 1 MiB. The buffer is zeroed after decoding; the Bitmap/String live in the FLAG_SECURE window until the viewer closes, another page renders, the message expires or Enigma locks. Other types show name and size. **Save to device** keeps the existing fresh-passphrase ACTION_CREATE_DOCUMENT restore. Outgoing items offer Share again and Save .enigma file (for USB).
 - Device: setup status/name, current version, updated guide, fingerprint, rename and reset. A separate Security & unlock page contains manual lock and passphrase/biometric settings.
+- Groups: create/join and a compact group list; each group opens details with Invite, member management, send, rename and remove.
+
+## Storage
 
 groups.qkv holds group seeds, signed directories/revisions, aliases/local blocks, replay logs, joining state and encrypted text/history metadata inside AES-GCM vault encryption. password.qkl holds the double-encrypted master-key envelope. invitationCache holds bounded recipient-encrypted joining packets inside the same vault; pendingInvites maps request IDs to admitted members, and pairingUsed retains replay tombstones. Optional biometric.qkb holds a biometric-key-encrypted alternate master envelope. files/packages holds only signed endpoint/group-encrypted file packages with opaque UUID names.
 
@@ -168,6 +175,8 @@ Executed build/test evidence is recorded in VERIFICATION.txt, not inferred from 
 Planned work: reviewed ratcheting/forward secrecy; separate signing/decryption identities with explicit transition; authenticated group rekeying; dedicated personal file vault if requested; recovery design if requested; accessibility/device-size coverage; independent security audit. These are not claims about the current build.
 
 ## Change log
+
+- 0.6.0 / 28 October 2026: NFC joining fix (recipient reader mode re-armed after the QR scanner or any pause; owner polling disabled on Android 15+ while serving) after "Empty tag" was seen in phone testing; joining menus rebuilt as buttons whose names match the on-screen instructions; messenger-style Messages tab with conversations, Send (message or file → group → person) and Receive; typed messages sent as .enigma files by default with text packets as the alternative; received photos/text open in an in-memory viewer with Save to device as a separate step; Enigma accepts .enigma files and text opened or shared from other apps; Home tab removed.
 
 - 0.5.0 / 28 October 2026: received text/files open in the group named by the packet and tolerate messenger line-wrapping (fixes "message did not decrypt" when another group was selected); nearby joining by one QR code or NFC tap over an app-started local-only hotspot or same Wi-Fi with a one-time KEK, owner-fingerprint pinning and six-digit check codes; manual file transfer for USB cables/any copy with a check code; USB accessory, typed hotspot code and multi-frame QR joining removed; CameraX dependency removed.
 

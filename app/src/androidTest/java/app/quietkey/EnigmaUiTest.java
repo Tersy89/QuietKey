@@ -27,7 +27,7 @@ public final class EnigmaUiTest {
     static final String PASS="Emulator passphrase 04";
     private static Vault openVault(Context context)throws Exception {byte[] key=new PasswordLock(context).unlock(PASS.toCharArray());try{return new Vault(context,key);}finally{Arrays.fill(key,(byte)0);}}
     private void editors(View v,List<EditText> result){if(v instanceof EditText)result.add((EditText)v);if(v instanceof ViewGroup)for(int i=0;i<((ViewGroup)v).getChildCount();i++)editors(((ViewGroup)v).getChildAt(i),result);}
-    private void unlock(ActivityScenario<MainActivity> scenario)throws Exception{waitFor(scenario,"Unlock Enigma");scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(scenario,"Unlock");waitFor(scenario,"Home");}
+    private void unlock(ActivityScenario<MainActivity> scenario)throws Exception{waitFor(scenario,"Unlock Enigma");scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(scenario,"Unlock");waitFor(scenario,"Device");}
     private void authenticateDialog(ActivityScenario<MainActivity> scenario)throws Exception{scenario.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("transientDialog");field.setAccessible(true);android.app.AlertDialog dialog=(android.app.AlertDialog)field.get(a);EditText pass=editor(dialog.getWindow().getDecorView());assertNotNull("Passphrase dialog is showing: "+dialog.isShowing(),pass);pass.setText(PASS);assertEquals("Unlock",dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).getText().toString());dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();}catch(ReflectiveOperationException e){throw new AssertionError(e);}});Thread.sleep(1200);}
     private void authenticateDialog()throws Exception{AccessibilityNodeInfo edit=null;long until=System.currentTimeMillis()+5000;while(edit==null&&System.currentTimeMillis()<until){edit=node(InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow(),"",true);if(edit==null)Thread.sleep(200);}assertNotNull("Authentication password",edit);Bundle args=new Bundle();args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,PASS);assertTrue(edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args));assertTrue(systemClick("Unlock"));Thread.sleep(1200);}
 
@@ -111,14 +111,21 @@ public final class EnigmaUiTest {
         Bundle args=new Bundle();args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,filename);assertTrue(edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args));
         assertTrue("Save document",systemClick("Save"));
     }
+    private void clickCard(ActivityScenario<MainActivity> scenario,String text){scenario.onActivity(a->{TextView view=find(a.getWindow().getDecorView(),text);assertNotNull(text,view);assertTrue(text,((View)view.getParent()).performClick());});}
+    /** Sharing leaves Enigma, which locks it; dismiss the share sheet and unlock again. */
+    private void leaveShareSheet(ActivityScenario<MainActivity> scenario)throws Exception{Thread.sleep(1500);shell("input keyevent 4");unlock(scenario);}
     private void filesThroughSystemPicker(ActivityScenario<MainActivity> scenario)throws Exception {
         String suffix=Long.toString(System.currentTimeMillis()),input="enigma-source-"+suffix+".bin",encrypted="enigma-package-"+suffix+".enigma",restored="enigma-restored-"+suffix+".bin";
         byte[] original=Protocol.random(200000);
         download(input,"application/octet-stream",new ByteArrayInputStream(original));
-        click(scenario,"Choose file to encrypt");chooseDocument(input);waitFor(scenario,"Save encrypted file");
-        click(scenario,"Save encrypted file");saveDocument(encrypted);waitFor(scenario,"Message attachment");
-        click(scenario,"Open .enigma file to decrypt");chooseDocument(encrypted);waitFor(scenario,"Save restored file");
-        click(scenario,"Save restored file");authenticateDialog();saveDocument(restored);waitFor(scenario,"Message attachment");Thread.sleep(500);
+        click(scenario,"Send");waitFor(scenario,"1 · MESSAGE OR FILE");
+        click(scenario,"Or choose a file or photo");chooseDocument(input);waitFor(scenario,"Remove file");
+        scenario.onActivity(a->{List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(1).setSelection(1);});Thread.sleep(200);
+        click(scenario,"Encrypt & share");leaveShareSheet(scenario);waitFor(scenario,input);
+        clickCard(scenario,input);waitFor(scenario,"Save .enigma file (for USB)");
+        click(scenario,"Save .enigma file (for USB)");saveDocument(encrypted);waitFor(scenario,"Share again");
+        click(scenario,"Messages");click(scenario,"Receive");click(scenario,"Open .enigma file");chooseDocument(encrypted);waitFor(scenario,"Save to device");
+        click(scenario,"Save to device");authenticateDialog();saveDocument(restored);waitFor(scenario,"Back to chat");Thread.sleep(500);
         assertArrayEquals(original,shell("cat /sdcard/Download/"+restored));
     }
     @Test public void setupCameraAndNavigation()throws Exception {
@@ -129,24 +136,24 @@ public final class EnigmaUiTest {
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)) {
             waitFor(scenario,"Protect Enigma");preview(scenario,"password");scenario.onActivity(a->{List<EditText> fields=new ArrayList<>();editors(a.getWindow().getDecorView(),fields);for(EditText f:fields)f.setText(PASS);TextView reveal=find(a.getWindow().getDecorView(),"Show new passphrase");assertNotNull(reveal);reveal.performClick();assertNull(fields.get(0).getTransformationMethod());assertEquals(PASS,fields.get(0).getText().toString());reveal.performClick();assertNotNull(fields.get(0).getTransformationMethod());});click(scenario,"Protect my app");waitFor(scenario,"Set up your device");preview(scenario,"setup");
             scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText("Emulator test"));
-            click(scenario,"Set up with live camera");waitFor(scenario,"Send privately");
-            scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Write a message").isEnabled());assertFalse(find(a.getWindow().getDecorView(),"Send a file or image").isEnabled());});
+            click(scenario,"Set up with live camera");waitFor(scenario,"Receive");
+            click(scenario,"Send");waitFor(scenario,"No one else is in this group yet. Invite someone from Groups first.");
+            scenario.onActivity(a->assertFalse(find(a.getWindow().getDecorView(),"Encrypt & share").isEnabled()));
             // A genuine second RSA identity is registered only in this disposable emulator vault.
             Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();Vault paired=openVault(target);KeyPairGenerator generator=KeyPairGenerator.getInstance("RSA");generator.initialize(2048);KeyPair friend=generator.generateKeyPair();String friendId=Protocol.fingerprint(friend.getPublic());
-            paired.groups.get(0).members.put(friendId,Protocol.b64(friend.getPublic().getEncoded()));paired.groups.get(0).memberNames.put(friendId,"Test recipient");PairingProtocol.signRoster(paired.groups.get(0),paired.publicKey(),paired.privateKey());paired.save();scenario.recreate();unlock(scenario);waitFor(scenario,"Send privately");
-            scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Write a message").isEnabled());List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(1).setSelection(1);});Thread.sleep(200);preview(scenario,"home");
-            click(scenario,"Write a message");waitFor(scenario,"MESSAGE EXPIRY (TTL)");preview(scenario,"compose");
+            paired.groups.get(0).members.put(friendId,Protocol.b64(friend.getPublic().getEncoded()));paired.groups.get(0).memberNames.put(friendId,"Test recipient");PairingProtocol.signRoster(paired.groups.get(0),paired.publicKey(),paired.privateKey());paired.save();scenario.recreate();unlock(scenario);waitFor(scenario,"1 · MESSAGE OR FILE");
+            scenario.onActivity(a->{assertFalse(find(a.getWindow().getDecorView(),"Encrypt & share").isEnabled());List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(1).setSelection(1);});Thread.sleep(200);preview(scenario,"send");
             scenario.onActivity(a->{List<Spinner> pickers=new ArrayList<>();spinners(a.getWindow().getDecorView(),pickers);pickers.get(2).setSelection(1);editor(a.getWindow().getDecorView()).setText("Unified history test");});Thread.sleep(100);
-            click(scenario,"Encrypt for selected member");waitFor(scenario,"Share encrypted message");
+            click(scenario,"Send as text instead");leaveShareSheet(scenario);waitFor(scenario,"Message (sent as text)");preview(scenario,"chat");
             Vault withText=openVault(target);assertEquals(1,withText.history.size());MessageRecord text=withText.history.get(0);assertEquals(300000,text.expiresAt-text.createdAt);assertTrue(text.payload.startsWith("QKD3:"));
-            scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(text.payload));click(scenario,"Decrypt pasted message");waitFor(scenario,"DECRYPTED • SIGNATURE VERIFIED");
+            click(scenario,"Receive");scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(text.payload));click(scenario,"Open pasted text");waitFor(scenario,"Back to chat");
             assertTrue(openVault(target).groups.get(0).seen.contains(text.id));
-            scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(text.payload));click(scenario,"Decrypt pasted message");assertTrue("External replay must be rejected",systemClick("OK"));assertEquals(1,openVault(target).history.size());
-            click(scenario,"Messages");click(scenario,"Open message");waitFor(scenario,"DECRYPTED • SIGNATURE VERIFIED");click(scenario,"New text message");
-            scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText("Background clear test"));
+            click(scenario,"Messages");click(scenario,"Receive");scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText(text.payload));click(scenario,"Open pasted text");assertTrue("External replay must be rejected",systemClick("OK"));assertEquals(1,openVault(target).history.size());
+            click(scenario,"Messages");clickCard(scenario,"Test recipient");clickCard(scenario,"Message (sent as text)");waitFor(scenario,"Share again");
+            click(scenario,"Messages");click(scenario,"Send");scenario.onActivity(a->editor(a.getWindow().getDecorView()).setText("Background clear test"));
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
-            waitFor(scenario,"Unlock Enigma");unlock(scenario);scenario.onActivity(a->{assertEquals("",editor(a.getWindow().getDecorView()).getText().toString());List<Spinner> picks=new ArrayList<>();spinners(a.getWindow().getDecorView(),picks);picks.get(1).setSelection(1);});Thread.sleep(100);
-            click(scenario,"Attach a file or image");waitFor(scenario,"Message attachment");preview(scenario,"files");
+            waitFor(scenario,"Unlock Enigma");unlock(scenario);scenario.onActivity(a->assertEquals("",editor(a.getWindow().getDecorView()).getText().toString()));
+            click(scenario,"Messages");waitFor(scenario,"Receive");
             filesThroughSystemPicker(scenario);
             click(scenario,"Groups");waitFor(scenario,"Groups");preview(scenario,"groups");
             click(scenario,"Starter group");click(scenario,"Manage members (2)");waitFor(scenario,"Starter group members");
@@ -155,7 +162,7 @@ public final class EnigmaUiTest {
             click(scenario,"Reset app & delete local data");authenticateDialog();assertTrue(systemClick("Delete local app data"));assertTrue("Empty reset confirmation must preserve the app",systemClick("Keep my data"));
             Vault persisted=openVault(InstrumentationRegistry.getInstrumentation().getTargetContext());assertTrue(persisted.setupCompleted);assertEquals("Emulator test",persisted.deviceName);assertTrue(persisted.setupCapturedAt>0);assertNotNull(persisted.personalGroupId);
             assertEquals(2,persisted.history.size());assertEquals("text",persisted.history.get(0).kind);assertEquals("file",persisted.history.get(1).kind);assertEquals(300000,persisted.history.get(1).expiresAt-persisted.history.get(1).createdAt);
-            click(scenario,"Messages");waitFor(scenario,"ALL MESSAGES · TEXT & FILES");preview(scenario,"history");
+            click(scenario,"Messages");waitFor(scenario,"Test recipient");preview(scenario,"messages");
             click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");preview(scenario,"locked");assertThrows(SecurityException.class,()->new Vault(target));unlock(scenario);
             click(scenario,"Groups");click(scenario,"Starter group");
             click(scenario,"Invite new recipient");assertTrue(systemClick("QR fallback"));Thread.sleep(600);shell("input keyevent 4");waitFor(scenario,"Groups");
@@ -205,7 +212,7 @@ public final class EnigmaUiTest {
             // Host responds to each READY stage with adb emu finger touch 1.
             waitFor(scenario,"Disable biometric unlock");assertTrue(lock.biometricConfigured());
             click(scenario,"Lock Enigma now");waitFor(scenario,"Unlock Enigma");click(scenario,"Unlock with biometrics");assertTrue(systemClick("Use passphrase"));waitFor(scenario,"Unlock Enigma");assertThrows(SecurityException.class,()->new Vault(target));
-            assertTrue("Unlock button is reachable after the cancelled system prompt closes",systemClick("Unlock with biometrics"));stage=new Bundle();stage.putString("stream","BIO_UNLOCK_READY\n");InstrumentationRegistry.getInstrumentation().sendStatus(2,stage);waitFor(scenario,"Home");
+            assertTrue("Unlock button is reachable after the cancelled system prompt closes",systemClick("Unlock with biometrics"));stage=new Bundle();stage.putString("stream","BIO_UNLOCK_READY\n");InstrumentationRegistry.getInstrumentation().sendStatus(2,stage);waitFor(scenario,"Device");
             click(scenario,"Device");click(scenario,"Security & unlock");click(scenario,"Disable biometric unlock");authenticateDialog(scenario);waitFor(scenario,"Enable biometric unlock");assertFalse(lock.biometricConfigured());
         }
     }

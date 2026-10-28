@@ -1,3 +1,48 @@
+Enigma 0.6.0 development verification — 28 October 2026
+
+Branch feature/joining-0.5 (continues PR #2). README.md, SECURITY.md, TESTING.md, VERIFICATION.txt
+and SYSTEM_DESIGN.md read before development.
+
+User feedback from 0.5.0 phone testing: all joining tests worked except NFC ("empty key or
+something"); joining instructions named options differently from the plain-text option list;
+messaging had too many options; received files had to be saved to the device to be seen.
+
+Implemented:
+- NFC: Android drops reader mode whenever the activity pauses (e.g. QR scanner); the recipient
+  then read the owner as an "Empty tag", whose system screen backgrounded and locked Enigma.
+  NearbyJoinDialog re-arms reader mode on every MainActivity.onResume while waiting; the owner
+  disables its own NFC polling with setDiscoveryTechnology on Android 15+ while serving and
+  resets it on every exit. NFC read failures now show the underlying reason.
+- Joining choosers are app-styled buttons with one-line explanations; names match the owner's
+  on-screen instructions and the recipient's Scan QR code button.
+- Messages: three tabs (Home removed); conversation list per group+person (Inbox); Send = type a
+  message or choose a file, then group, then person, Encrypt & share (typed text is a file-v3
+  .enigma package named message.txt, text/plain); Send as text instead keeps QKD3; Receive =
+  Open .enigma file or paste text, group/sender found from the packet; Enigma accepts
+  ACTION_VIEW/ACTION_SEND content:// files and text from other apps after unlock.
+- In-app viewer: images (<=25 MiB, subsampled to <=2048 px) and text (<=1 MiB) restored into a
+  zeroed in-memory buffer after full verification and a durable replay-ID commit; other types
+  show name/size. Save to device keeps fresh passphrase authentication.
+- Version 0.6.0 (versionCode 10). Same debug signer (certificate SHA-256 2aca54e2…836b7).
+
+Executed on this PC (Windows, JDK 17.0.20.1, Gradle 8.9, AGP 8.7.3, SDK 35):
+- gradlew testDebugUnitTest assembleDebug lintDebug assembleDebugAndroidTest: success, lint 0
+  errors (30 warnings, all pre-existing categories). 89 JVM unit tests, 0 failures, including new
+  InboxTest (conversation grouping/order, labels, preview limits, typed message as .enigma
+  round trip).
+- Protocol.java self-test: all 21 checks passed. tools/CheckSyntax: 39 files parsed.
+- EnigmaUiTest updated for the new screens and compiled; not run (needs the disposable emulator).
+- Enigma.apk at repository root: SHA-256
+  4F0342AF75D4DBA58A6E2AED47460685A4D7DB7FA5ED940604EA662E33A3E01A, 6,336,582 bytes.
+
+Not executed (manual, physical phones required):
+- NFC joining on the S23 and P30 after the fix, including after backing out of the scanner.
+- New Send/Receive flow, opening .enigma files from WhatsApp/Files into Enigma, photo/text
+  viewing, Save to device, conversation list, expiry closing an open message.
+These are tests, not an independent security audit.
+
+================================================================================
+
 Enigma 0.5.0 development verification — 28 October 2026
 
 README.md, SECURITY.md, TESTING.md, VERIFICATION.txt and SYSTEM_DESIGN.md read before development.
