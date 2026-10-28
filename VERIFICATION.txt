@@ -1,3 +1,55 @@
+Enigma 0.5.0 development verification — 28 October 2026
+
+README.md, SECURITY.md, TESTING.md, VERIFICATION.txt and SYSTEM_DESIGN.md read before development.
+Branch feature/joining-0.5. Local tools (JDK 17 under .local-tools/, Android SDK under
+%LOCALAPPDATA%), build output and keys remain outside the repository.
+
+User scope: fix received messages not decrypting; replace joining with a single QR / NFC tap
+over Wi-Fi protected by a one-time key-encryption key, keep joining separate from message
+encryption with the group secret encrypted on top of the Wi-Fi layer, add manual file export
+for USB transfer, and remove QR joining and USB direct transfer.
+
+Implemented:
+- Received text/files are verified in the group named in the packet header instead of the
+  group selected on screen; pasted text has all whitespace removed (messenger wrapping).
+- JoinBootstrap QKB1 (about 250 characters): hotspot/same-Wi-Fi details, 32-byte one-time KEK,
+  owner fingerprint, five-minute expiry. HKDF transport key for EJW1 frames; six-digit check
+  code bound to KEK and the exact signed request; manual check code bound to request and
+  owner public key; recipient refuses invitations from any other owner identity.
+- NearbyJoinDialog: app-started local-only hotspot or same Wi-Fi, listener bound to the
+  private interface address, single QR, NFC HCE serving (JoinNfcService) and NFC reader,
+  Wi-Fi network request (API 29+) with socket bound to that network, check-code consent on
+  both phones, cleanup of hotspot/request/NFC payload/KEK on every exit path.
+- Manual transfer: save/open request, invitation and confirmation as text files or copied
+  text, with check-code confirmation on both sides.
+- Removed: UsbJoinLink (AOA), typed hotspot code, QrTransfer/QrTransferDialog/JoinScanActivity/
+  QrLuma, USB features, CameraX dependencies and their tests (QrLumaTest, QrScanTest,
+  QrFlowUiTest, NearbyJoinTest).
+- Permissions added: ACCESS/CHANGE_WIFI_STATE, CHANGE_NETWORK_STATE, NFC, location
+  (maxSdkVersion 32) and NEARBY_WIFI_DEVICES (neverForLocation), requested only when inviting.
+- Version 0.5.0 (versionCode 9). Same debug signer as 0.4.4
+  (certificate SHA-256 2aca54e2…836b7), so it installs over existing test installations.
+
+Executed on this PC (Windows, JDK 17.0.20.1, Gradle 8.9, AGP 8.7.3, SDK 35, Build Tools 34):
+- gradlew testDebugUnitTest assembleDebug lintDebug assembleDebugAndroidTest: success,
+  lint 0 errors. 86 JVM unit tests, 0 failures, including new JoinBootstrapTest (7: round
+  trip/size, same-Wi-Fi, check-code binding, manual code, wrong owner/tamper/public address,
+  expiry, KEK holder cannot open QKG2) and ReceiveRoutingTest (Starter group selected +
+  wrapped paste routes to the right group and decrypts; wrong group refuses).
+- Protocol.java self-test: all 21 checks passed. tools/CheckSyntax: 37 files parsed.
+- Enigma.apk at repository root: SHA-256
+  B9A059BFA43179B329B9B0D27090BBAAD8A1811C78B372A6144CA5D4F500B6A5, 6,469,743 bytes.
+
+Not executed (manual, physical phones required):
+- Instrumentation tests on a device/emulator were compiled but not run in this session.
+- Local-only hotspot start/address discovery, Wi-Fi network-request prompt, NFC HCE/reader
+  interoperability and single-QR scanning on the Samsung S23 and Huawei P30.
+- End-to-end two-phone joining and messaging after joining; manual file transfer via USB.
+- Android 16+ local-network permission behaviour.
+These are tests, not an independent security audit.
+
+================================================================================
+
 Enigma 0.4.4 development verification — 6 October 2026
 
 README.md, SECURITY.md, TESTING.md and VERIFICATION.txt read before development.

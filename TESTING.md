@@ -1,8 +1,10 @@
-# Enigma 0.4.4 local setup and phone testing
+# Enigma 0.5.0 local setup and phone testing
 
 Keep keys, SDK paths, device data/logs and previews local; they are ignored. Source and root APK are in the owner's private GitHub repository. VERIFICATION.txt records executed tests; SYSTEM_DESIGN.md describes the current implementation.
 
 ## This PC and build
+
+OneDrive can lock files under app/build mid-build. If Gradle reports AccessDeniedException there, build with an init script that moves the build directory outside OneDrive, e.g. `.\gradlew.bat -I $env:LOCALAPPDATA\quietkey-build\outside-onedrive.gradle ...` containing `allprojects { layout.buildDirectory = new File(System.getenv("LOCALAPPDATA"), "quietkey-build/" + project.name) }`.
 
 Open the editable QuietKey directory in Android Studio. Use JDK 17 under ignored .local-tools/ for Gradle; the installed Studio runtime is JDK 25 and should not run Gradle 8.9. SDK Platform 35/Build Tools 34.0.0 are installed; ignored local.properties points to this PC's SDK.
 
@@ -43,13 +45,11 @@ The UI test covers password creation/unlock, live emulated-camera setup, tabs, e
 
 The password-vault test checks device-bound encryption, wrong password/key/corrupt vault/envelope failures, closed-session key clearing and password replacement without changing stored groups. It is emulator-only because changing password protection disables the app's shared biometric alias.
 
-## Opt-in emulator camera and fingerprint regressions
+## Opt-in emulator fingerprint regression
 
-Use only the disposable generic EnigmaTest emulator. The camera test uses the emulator's imagefile camera mode, so the actual camera preview/decoder/callback must return the fixture packet without injecting decoded text. It does not establish autofocus or screen-to-camera performance on Huawei/Samsung phones.
+Use only the disposable generic EnigmaTest emulator. The multi-frame QR camera regressions (QrScanTest) were removed with multi-frame QR joining in 0.5.0.
 
-1. Build/install both APKs. Run QrScanTest#cameraPipelineDecodesQr with enigmaQrCameraTest=true and enigmaQrFixtureOnly=true. This writes a padded 527-character production QR fixture and deliberately skips camera validation.
-2. Pull /sdcard/Android/data/app.quietkey.debug/files/qr-camera-test.png to a local ignored file. Restart the emulator using -camera-back imagefile:ABSOLUTE_FIXTURE_PATH. Wake/unlock it, then run QrScanTest with enigmaQrCameraTest=true and without the fixture-only flag. cameraPipelineDecodesQr and cameraXPipelineDecodesQr must each return the exact packet. cameraManualAlternateDecodesQr configures only the original test decoder for CODE_128 so it cannot recognize the QR, then explicitly selects CameraX and decodes through the camera. Each actual camera test must show Code scanned before an explicit Continue returns the packet. No decoded packet string is injected. The fixture padding/offset compensates this emulator camera projection; it does not change production QR rendering.
-3. For fingerprint testing, enroll fingerprint 1 with an emulator screen PIN in Android Settings. Keep the disposable vault from setupCameraAndNavigation (password Emulator passphrase 04). Run EnigmaUiTest#biometricEnableCancelAndUnlock with enigmaBiometricTest=true. Release any held emulator finger before starting. At BIO_ENABLE_READY and BIO_UNLOCK_READY, issue adb -s emulator-5554 emu finger remove, then emu finger touch 1 within 25 seconds; a held finger does not create a new authentication event. Missing host input deliberately fails the test. The test verifies passphrase-confirmed enable, cancellation without vault access, authenticated unlock and passphrase-confirmed disable. The retry waits for the real unlock button to become accessible after the cancelled system prompt closes.
+1. For fingerprint testing, enroll fingerprint 1 with an emulator screen PIN in Android Settings. Keep the disposable vault from setupCameraAndNavigation (password Emulator passphrase 04). Run EnigmaUiTest#biometricEnableCancelAndUnlock with enigmaBiometricTest=true. Release any held emulator finger before starting. At BIO_ENABLE_READY and BIO_UNLOCK_READY, issue adb -s emulator-5554 emu finger remove, then emu finger touch 1 within 25 seconds; a held finger does not create a new authentication event. Missing host input deliberately fails the test. The test verifies passphrase-confirmed enable, cancellation without vault access, authenticated unlock and passphrase-confirmed disable. The retry waits for the real unlock button to become accessible after the cancelled system prompt closes.
 
 These methods are skipped by the preserving phone helper. Run the full first-use UI test only after intentionally clearing the identified disposable emulator's app data. Do not clear or uninstall a retained phone to prepare tests.
 
@@ -63,30 +63,29 @@ These methods are skipped by the preserving phone helper. Run the full first-use
 - Encrypt/restore images, PDFs and arbitrary binary files; compare bytes/hash and preserve sources. Test empty, 50 MiB boundary,oversized,truncated/tampered packages. Readable export requires the current app password even after biometric unlock; saved readable copies remain outside the vault.
 - Inspect tabs, group/member names/fingerprints, history after restart, screenshot blocking, airplane mode, larger font/display and keyboard accessibility. No network connection is required for cryptography.
 
-## USB and personal-hotspot joining — priority phone checks
+## Receiving fix — priority phone check
 
-Update both phones to 0.4.4. Owner creates a group and selects Invite new recipient. Recipient chooses Groups → Join group. USB cable (preferred), Personal hotspot and QR fallback appear in that order.
+1. On both phones keep the Starter group. Join a new group, then on the receiving phone select **Starter group** before pasting a message encrypted in the new group. It must decrypt and switch to the new group.
+2. Send a long message through a messenger that wraps text (or paste it with added line breaks). It must still decrypt.
+3. Paste a message for a group not on this phone: the error must say to join that group first.
 
-1. **USB:** open USB joining on both, connect a known data cable, let one phone control USB and approve Android's USB/accessory prompts. Check owner Invite and recipient Join group confirmations, then both success screens. B imports the group/secret/all public keys; A records Joined and clears the pending grant. Repeat with the other phone hosting the USB bus and with an OTG adapter if needed. Debugging must stay unnecessary. Charging-only/unsupported accessories should leave a useful waiting/error screen; use hotspot when unsupported.
-2. **Hotspot:** enable A's personal hotspot in Android Settings; connect B using its Wi-Fi password, accepting No Internet. Open Personal hotspot on both. A selects the hotspot address, reads the five-part temporary code and taps Wait for recipient. B enters matching address/code and Connect to owner. Confirm on both and verify the automatic signed receipt/group import. Repeat with mobile data off and with roles reversed. Check a second available address/normal private Wi-Fi, isolated-client networks, hotspot loss and incorrect gateway prefill. No external service should be contacted.
-3. **Negative cases:** wrong/short code, public/hostname/loopback address, cable detach, USB denial, owner Decline, recipient Decline, five-minute timeout, Cancel, background, screen-off and Activity recreation. Reopen after interruption; it creates a fresh request/code without resetting identity/history. No partial/declined recipient import; an owner-approved pending member may remain Invited after a declined/lost recipient transfer. Remove that member if unwanted. If the group already imported before lost confirmation, retain it; the first verified message confirms it later. Reimport must refuse existing groups while preserving history.
-4. **Security:** tampered/truncated/downgraded/oversized/out-of-sequence transport, wrong-recipient/stale invitation, forged receipt and false owner directory must fail. C's key cannot decrypt B's invitation or A↔B content despite sharing the group seed. Confirm visible device/owner fingerprints with the known person; neither network membership nor an AOA string authenticates a name. Do not send the temporary code to an unknown person.
-5. **UI:** no scanner opens for USB/hotspot. Check clear method selection, cable/role/permission guidance, readable address/code, soft keyboard and visible Connect/Wait/Invite/Join/Done on P30/S23, narrow display and font scales 1.3/1.5. About me guide must explain these current steps. Cancel/bad input must preserve the vault. USB receiver/listener/sockets should cease on lock and leaving the flow.
+## Nearby joining — priority phone checks
 
-LocalJoinTest uses ordinary JVM TCP streams with software RSA peers: encrypted/fragmented duplex exchange, signed admission/import/receipt, wrong-code/tamper/downgrade/bounds/truncation/replay/address guards, invalid signature, decline and approval timeout. Fragmented plain streams exercise framing, not physical USB or Android AOA. NearbyJoinTest is opted-in generic-emulator-only: actual Android TCP listener/client and MainActivity consent/persistence with a software peer, recipient import/decline, automatic signed confirmation, preferred-method order, USB waiting/receiver startup and background cancellation. A separate emulator test sends actual PendingIntent fill-in grant/denial extras and verifies cancellation on close; this emulates the result delivery, not a hardware permission prompt. The settings-return test opens actual Android connection settings, goes Back and checks the handoff allowance ends while groups/history remain preserved. Its previews use the actual rendered Dialog. These checks do not establish Samsung/Huawei USB/hotspot interoperability. The preserving phone helper skips them without enigmaUiTest=true; never opt a retained phone into disposable-emulator tests.
+Update both phones to 0.5.0 (installs over 0.4.4; same debug signer). Owner creates a group and taps Invite new recipient. Recipient taps Groups → Join group.
 
-## QR fallback — existing manual camera checks
+1. **QR, hotspot (S23 owner → P30 recipient, then reversed):** owner chooses Nearby: QR code or NFC tap and allows Nearby devices (13+) or Location (P30; Location must be on). Check the hotspot starts without opening Settings and one QR appears. Recipient chooses Scan or tap → Scan owner's code, then Connect in Android's prompt. Both screens must show the same six-digit check code; owner taps Codes match · Invite, recipient Join group. Both show success; owner shows Joined. Note whether the owner's normal Wi-Fi drops and returns.
+2. **NFC:** repeat with NFC on both phones, holding them back to back instead of scanning.
+3. **Same Wi-Fi:** both on the home Wi-Fi; owner chooses Nearby on the same Wi-Fi.
+4. **Messaging after joining:** send A→B and B→A text and a file in the new group; both must decrypt.
+5. **Negative cases:** scan an expired code (wait five minutes), Cancel on either phone mid-join, owner Decline, recipient Decline, deny the permission, deny Android's Connect prompt, move out of range, background/screen-off during joining. None may save a group without confirmation; the hotspot must stop afterwards.
+6. **Check-code race (optional):** with a third phone, scan the owner's QR first. The owner's check code must differ from the intended recipient's screen; Decline.
 
-Use correctly set clocks and update every device to 0.4.4. Pair directly with known people's devices.
+## Manual transfer — phone checks
 
-1. A alone creates a group. B taps Join group → QR fallback and shows step 1. A opens the group and taps Invite new recipient → QR fallback. After each Code scanned, B taps Next code and A taps Scan next code. A continues and confirms Invite after the last code. B taps Swap phones → Scan owner's invitation, then scans A's codes using the same manual advances; after the last code B taps Join group. Joining is complete when the group appears on B; no reverse invitation is needed. Verify B imports the correct group and all member keys without additional trust scans.
-2. Send A↔B private text/files. A can open its sent copy. Optional B confirmation or verified text reply changes A's status from Invited to Joined.
-3. Only A has invitation controls. A invites C. C imports A/B automatically; send C→B and B receives the owner-signed directory update automatically before accepting C's verified packet.
-4. Photograph A's invitation: C must not be able to join with it. An invitation for an earlier B joining session must fail after B generates a new request. Expired,tampered,mixed-frame invitations must not commit partial groups/trust. Reimporting an existing group preserves its history and refuses duplicate joining.
-5. A→B text/file must be unreadable on C despite C sharing the group secret. B cannot open content intended only for C. Wrong group secret must also prevent endpoint decryption of new formats. Unknown/blocked identities and forged owner directories must fail.
-6. Interrupt after A displays its invitation. Close/reopen A, then Invite new recipient → Continue QR invitation. Verify B can finish the active request. Remove pending B on A, then retry B's old QR: reject with explicit Start again instructions. B uses More → Start again to create a fresh request and A can readmit it. Repeat after B removes its local group: old consumed invitations remain rejected; a fresh request works without resetting either app.
-7. Hold each code still; it must never advance on its own. Verify Code scanned pauses the camera and Scan next code resumes it. On P30/S23 check original AUTO focus, More → Try other scanner, alternate tap focus and torch. Check all joining text/buttons plus the full-width QR/camera area on normal and enlarged text settings. Test Copy transfer → Paste request on A and Copy transfer → Paste invitation on B; reject wrong recipient, stale request, tampering, expired and duplicate group exactly as QR. Verify the known contact/owner when using messenger transport.
-8. Local removal cannot revoke retained secrets on C. Create a replacement group and invite only A/B when testing actual group replacement. Offline members receive directory changes only with later packets.
+1. Recipient: Join group → Manual transfer: save my request file. Copy it to the owner over USB via a computer.
+2. Owner: Invite → Manual transfer: open their request file; note the check code; Invite → Save file. Copy the invitation back.
+3. Recipient: open the owner's invitation file; the check code must match the owner's. Join; Save confirmation file; owner opens it and shows Joined.
+4. Negative: open the wrong file type, an invitation meant for another phone, a request older than five minutes, a modified file. All must be refused.
 
 ## Destructive reset — disposable installation only
 
@@ -94,4 +93,4 @@ Device → Reset app & delete local data: require current passphrase, then exact
 
 The emulator-only full-reset harness takes enigmaUiTest=true plus enigmaResetTest=true. Reset intentionally kills instrumentation; a subsequent Keystore test with recorded beforeIdentity checks a new identity. It is never part of the normal phone helper.
 
-Physical-phone QR collection, vendor biometric prompts/invalidation, vendor camera/Keystore behavior, phone-update retention and accessibility remain manual checks unless separately recorded in VERIFICATION.txt. These tests are not an independent security audit.
+Physical-phone nearby joining (hotspot, Wi-Fi prompt, NFC, single-QR scanning), vendor biometric prompts/invalidation, vendor camera/Keystore behavior, phone-update retention and accessibility remain manual checks unless separately recorded in VERIFICATION.txt. These tests are not an independent security audit.

@@ -1,12 +1,12 @@
 # Enigma — private text and file messages
 
-Offline Android encryption for a selected member of an owner-managed group. Android 8.0/API 26+. No account or delivery backend. USB or a local hotspot carries joining packets; Android Internet permission is used for local sockets. The repository and APK distribution remain private.
+Offline Android encryption for a selected member of an owner-managed group. Android 8.0/API 26+. No account or delivery backend. A temporary local hotspot (started by the app) or a manually copied file carries joining packets; Android Internet permission is used for local sockets only. The repository and APK distribution remain private.
 
-## Download 0.4.4
+## Download 0.5.0
 
 **[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Sign in, open the file and choose **Download raw**. Install it on both devices. It appears as **Enigma (test)**. This is an unaudited development prototype with no recovery; use disposable data while testing.
 
-The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both pairing devices to **0.4.4** for USB and personal-hotspot joining. QR remains a fallback. QKD3 text and file-v3 remain the current message formats.
+The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both pairing devices to **0.5.0**: joining now uses one QR code or an NFC tap, or manual file transfer. USB direct transfer and multi-frame QR joining were removed. QKD3 text and file-v3 remain the current message formats.
 
 ## Protect and set up your device
 
@@ -14,36 +14,29 @@ The app ID and debug signer are unchanged. Install over the existing test app if
 2. Name the device and complete live camera setup: at least five seconds and 60 frames. Android Keystore generates the private RSA identity; camera input contributes additional input to group-secret generation. No video or audio is saved. The initial **Starter group** contains only this device.
 3. **Device → Security & unlock** provides **Lock Enigma now**, passphrase change, and optional fingerprint unlock on supported Android 8+ devices with strong enrolled biometrics. Biometrics are an alternate unlocking route, not an additional required factor. Changing the passphrase disables biometric unlock. If an existing biometric setup fails after this update, unlock with your passphrase, then disable and enable biometric unlock again.
 
-The protected vault is the app's local storage, not a separate personal file-storage feature. Leaving the app locks it; screen-off always locks. Camera setup and system file pickers have a controlled allowance of at most two minutes; the QR scanner allows at most five minutes to collect a large transfer. USB access prompts allow a bounded five-minute handoff; hotspot settings allow two minutes. Active nearby transfers close when the app locks, closes or leaves the foreground outside those handoffs. Screen-off still locks immediately. Fresh passphrase entry is required before readable-file export, reset and security-setting changes.
+The protected vault is the app's local storage, not a separate personal file-storage feature. Leaving the app locks it; screen-off always locks. Camera setup and system file pickers have a controlled allowance of at most two minutes; scanning the owner's joining code allows at most five minutes and Android's Wi-Fi connection prompt 90 seconds. Active nearby transfers close when the app locks, closes or leaves the foreground outside those handoffs. Screen-off still locks immediately. Fresh passphrase entry is required before readable-file export, reset and security-setting changes.
 
-## Join with USB or personal hotspot
+## Join a group
 
-Only the owner creates the group. On that phone, open **Groups → group → Invite new recipient**. On the other phone choose **Groups → Join group**. Select the same method on both phones. **USB cable (preferred)** appears first, **Personal hotspot** second, and **QR fallback** third.
+Only the owner creates the group. On that phone open **Groups → group → Invite new recipient**. On the other phone choose **Groups → Join group**. Joining copies the group's secret, settings and member public keys to the new phone, encrypted so only that phone can open them. It is separate from message encryption.
 
-### USB cable
+### Nearby: one QR code or an NFC tap (recommended)
 
-1. Open USB joining on both phones, then connect a USB data cable.
-2. Let one phone control USB and allow Android's USB/accessory access prompts on both. Either phone can be the USB host; that is separate from group ownership. USB debugging and a computer are not required.
-3. The owner checks the connected person's device name/fingerprint and taps **Invite**.
-4. The recipient checks the group/owner and taps **Join group**. The group details, unique group secret and complete public-key directory transfer together. A signed confirmation returns automatically; both screens show success.
+1. Owner: choose **Nearby: QR code or NFC tap**. Allow the permission Android asks for the first time (Nearby devices on Android 13+, Location on older phones, with Location turned on). Enigma starts its own private hotspot with no Internet and shows one code. No trip to Settings is needed.
+2. Recipient: choose **Scan or tap the owner's phone**, then tap **Scan owner's code**, or hold the phones back to back with NFC on. Tap **Connect** if Android asks to connect to the owner's device.
+3. Both phones show a six-digit **check code**. Owner: tap **Codes match · Invite** only if both codes are the same. Recipient: check the code and tap **Join group**. A signed confirmation returns automatically and both screens show success.
 
-Charging-only cables cannot carry the transfer. Some phone/cable combinations need an OTG adapter or do not support Android accessory mode. If USB cannot connect, use Personal hotspot. Physical S23/P30 accessory-mode interoperability still needs verification; emulator tests cannot establish it.
+The code works once and expires after five minutes. Only show it to the person joining. Keep both apps open; Cancel, background or screen-off stops joining. The owner's phone may drop its normal Wi-Fi while the joining hotspot runs and reconnects afterwards. If both phones are already on the same private Wi-Fi, the owner can choose **Nearby on the same Wi-Fi** instead.
 
-### Personal hotspot
+### Manual transfer (USB cable or any file copy)
 
-1. In Android Settings, turn on the owner's personal hotspot. Connect the recipient's phone to it using the hotspot password. Stay connected even if Android says **No Internet**. The same private Wi-Fi network also works when it permits devices to communicate.
-2. Return to Enigma and select **Personal hotspot** on both phones. **Open connection settings** cancels the current joining screen so you can configure the connection and reopen this method.
-3. Owner: select the hotspot's **Owner address**, show the **Temporary connection code**, and tap **Wait for recipient**. If several local addresses appear, choose the hotspot interface/address; a Wi-Fi address works only for devices connected to that same network.
-4. Recipient: enter that address and all five parts of the connection code, then tap **Connect to owner**. The address may be filled from the Wi-Fi gateway; check it matches the owner's screen.
-5. The owner taps **Invite** after checking the person/device. The recipient confirms **Join group**. Everything imports together and a signed confirmation returns automatically.
+1. Recipient: **Join group → Manual transfer: save my request file**. Copy the file to the owner's phone, for example through a computer over USB cables, or use **Copy text**.
+2. Owner: **Invite new recipient → Manual transfer: open their request file**, check the device and tap **Invite**, then **Save file** for the invitation and copy it back.
+3. Recipient: **Join group → Manual transfer: open the owner's invitation file**. Compare the six-digit check code with the owner in person or on a call, then tap **Codes match · Join**. Optionally save a confirmation file for the owner (**Open their confirmation file**); the first verified message also confirms joining.
 
-The random connection code protects the local transfer and lasts at most five minutes. It is separate from the hotspot password and the app passphrase. Share it only with the intended person. No account, mobile data, Internet service, discovery scan or separate key-trusting step is needed. Keep both apps open; Cancel/background/screen-off stops joining. Cancel and reopen the method to retry with a fresh request/code. A committed group remains saved if confirmation is interrupted; the first verified message also confirms membership. The owner can remove an unwanted pending member and readmit a fresh request without resetting either app.
+The files contain only a public request, an invitation encrypted for the recipient's phone, and a signed confirmation, so any transport is fine. Request files expire five minutes after they are made.
 
-### QR fallback
-
-QR work is deferred. The existing manual scanner remains under **QR fallback**: B shows its request; A scans each code with **Code scanned → Next code on B → Scan next code on A** and approves. B taps **Swap phones**, scans A's invitation the same way, then taps **Join group**. **More** contains Copy/Paste and Start again. A can reopen a saved grant through **Invite new recipient → Continue QR invitation: [name]** or **Scan QR confirmation**. The initial standard ZXing scanner and explicit CameraX alternate remain unchanged; S23 focus/detection is unresolved. No new physical-camera fix is claimed in this version.
-
-Every method transfers the same signed public request and invitation encrypted only for the recipient. Private identity keys never leave the phone. Pair with the known person's device: names/self-signed keys and possession of a hotspot code alone do not establish real-world identity. Invitations expire within five minutes even when messages use No expiry.
+Private identity keys never leave the phone. Names and self-signed keys alone do not prove a real-world identity; pair with the known person's device and compare check codes.
 
 The owner repeats this for each new device, up to 30 per group. Existing members receive owner-signed directory updates with new messages/files. Offline devices update when a packet reaches them. A device identity can join multiple groups, each with an independent secret.
 
@@ -66,7 +59,7 @@ Choose **Message expiry (TTL)** before encryption: **No expiry** by default, fiv
 
 TTL uses device clocks. It cannot erase saved plaintext or prevent a modified recipient from bypassing expiry. It is not remote self-destruction.
 
-Paste a complete received text packet and decrypt it in its group. External repeated text opening is rejected after its ID is durably saved; explicitly reopening authenticated local history remains possible before expiry.
+Paste a complete received text packet; Enigma opens it in the group named inside the packet, whichever group is selected, and ignores line breaks a messenger may add. External repeated text opening is rejected after its ID is durably saved; explicitly reopening authenticated local history remains possible before expiry.
 
 Open received `.enigma` files through Messages. The app verifies the complete signature and every chunk before offering **Save restored file**, which requires the app passphrase again. Files up to 50 MiB are supported; names and MIME types are encrypted. Archives may be explicitly restored again before expiry and are marked previously opened. Saving readable content places it outside Enigma's protection.
 
