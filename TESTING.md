@@ -97,6 +97,16 @@ Update both phones to 0.5.0 (installs over 0.4.4; same debug signer). Owner crea
 3. Recipient: open the owner's invitation file; the check code must match the owner's. Join; Save confirmation file; owner opens it and shows Joined.
 4. Negative: open the wrong file type, an invitation meant for another phone, a request older than five minutes, a modified file. All must be refused.
 
+## README screenshots
+
+docs/screenshots comes from ScreenshotTest. It is opt-in and emulator-only, and needs a fresh installation. It seeds demo members (Sam, Jordan) and genuinely encrypted demo messages, then renders the real screens from inside the app, because FLAG_SECURE blocks screen capture. Run it on a disposable emulator only:
+
+```powershell
+adb install -r app-debug.apk; adb install -r app-debug-androidTest.apk
+adb shell am instrument -w -e class app.quietkey.ScreenshotTest -e enigmaScreenshots true app.quietkey.debug.test/androidx.test.runner.AndroidJUnitRunner
+adb pull /sdcard/Android/data/app.quietkey.debug/files/screenshots/. docs/screenshots/
+```
+
 ## Destructive reset — disposable installation only
 
 Device → Reset app & delete local data: require current passphrase, then exact RESET. Empty/wrong confirmation or Cancel preserves data. Valid reset closes the app and deletes its local keys/groups/history/setup/cache, revokes permissions and creates a different fingerprint on next setup. External original/exported/shared files remain. Forgotten-password reset is Android Settings → Apps → Enigma (test) → Storage → Clear data.

@@ -1,10 +1,40 @@
-# Enigma — private text and file messages
+# Enigma — private messages over the apps you already use
 
-Offline Android encryption for a selected member of an owner-managed group. Android 8.0/API 26+. No account or delivery backend. A temporary local hotspot (started by the app) or a manually copied file carries joining packets; Android Internet permission is used for local sockets only. The repository and APK distribution remain private.
+Enigma is an Android app that gives you and the people you trust **your own encryption keys**, so you can send sensitive messages, photos and files over **WhatsApp, email, SMS/Messages, Signal, Telegram, a USB stick — anything** without that app, your email provider or anyone in between being able to read them.
+
+You write the message in Enigma, and it becomes a small encrypted `.enigma` file (or a block of encrypted text) that only the person you chose can open. Send it however you like. On their phone they tap the file, choose Enigma, and read it there.
+
+- **Your keys, made on your phone.** Each phone creates its own private key in the Android Keystore (hardware-backed where the phone supports it). Group secrets are generated from live camera noise mixed with secure system randomness. No account, no server, no phone number.
+- **Works over any channel.** Enigma doesn't send anything itself. The messenger or email only ever carries ciphertext.
+- **Only the chosen person can open it.** Every message is encrypted for one recipient and signed by the sender, so the reader knows who it really came from and that nothing was changed.
+- **Join in person.** People join a group by scanning a QR code or tapping phones (NFC) while they're together. Keys travel over a short-lived private Wi-Fi link with an extra layer of encryption and a six-digit check code. A manual file route (for example over USB) also works.
+- **Read inside the app.** Received photos and text open inside Enigma. Nothing readable is saved to the phone unless you choose **Save to device** (which asks for your passphrase).
+- **Locked by default.** A passphrase (or fingerprint) protects everything. Enigma locks whenever you leave it and blocks screenshots.
+
+> **Status:** a development prototype that has **not been independently security-audited**. Don't rely on it for life-or-death secrets. See [SECURITY.md](SECURITY.md) for exactly what it does and doesn't protect against, and [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) for how it works.
+
+## Screenshots
+
+| Conversations | A conversation | A received photo |
+|---|---|---|
+| <img src="docs/screenshots/02-messages.png" width="240" alt="Messages list with Send and Receive"> | <img src="docs/screenshots/03-chat.png" width="240" alt="Conversation with Sam"> | <img src="docs/screenshots/04-photo.png" width="240" alt="Encrypted photo opened inside Enigma"> |
+
+| Send: message, group, person | Join a group in person | Locked by default |
+|---|---|---|
+| <img src="docs/screenshots/06-send.png" width="240" alt="Send screen"> | <img src="docs/screenshots/09-join.png" width="240" alt="Join a group options"> | <img src="docs/screenshots/01-unlock.png" width="240" alt="Unlock screen"> |
+
+*These show demo people and messages on an emulator. The messages are really encrypted, created by `ScreenshotTest`. Enigma blocks normal screenshots, so these are rendered from inside the app.*
+
+## How it works, in short
+
+1. **Set up:** choose a passphrase, name your phone, and move the camera for five seconds to create your first group's secret.
+2. **Invite:** the group owner taps **Invite new recipient → Nearby: scan or tap**; the other person taps **Join group → Nearby: scan or tap** and scans the QR code (or holds the phones together). Both screens show the same six-digit code; both confirm.
+3. **Send:** **Messages → Send** → type or pick a file → group → person → **Encrypt & share**, then pick WhatsApp, email or any app.
+4. **Receive:** tap the `.enigma` file in that app and choose **Enigma** (or **Messages → Receive**).
 
 ## Download 0.6.0
 
-**[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Sign in, open the file and choose **Download raw**. Install it on both devices. It appears as **Enigma (test)**. This is an unaudited development prototype with no recovery; use disposable data while testing.
+**[Download Enigma.apk from main](https://github.com/Tersy89/QuietKey/blob/main/Enigma.apk)**. Open it and choose **Download raw**. Install it on both devices. It appears as **Enigma (test)**. This is an unaudited development prototype with no recovery; use disposable data while testing.
 
 The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both devices to **0.6.0**: Messages is now a chat list with **Send** and **Receive**; typed messages travel as small `.enigma` files by default; received photos and text open inside the app. Joining uses one QR code or an NFC tap, or manual file transfer. QKD3 text and file-v3 remain the current message formats.
 
