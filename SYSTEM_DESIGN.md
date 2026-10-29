@@ -205,6 +205,8 @@ Upgrading from 0.6.0 or an early 0.7.0 test build:
 
 Removed: RSA identities and Keystore identity alias use, FileProtocol, DirectProtocol, PairingProtocol, GroupKey and legacy QKM1.
 
+Removed members: keys are kept per person, not per group. When a member is removed or blocked, a group is deleted, or an adopted roster drops someone, every key shared with a person who is no longer a trusted member of any group on this device is deleted (`KeyPools.forgetAllExcept`), including this device's unused one-time private keys issued to them.
+
 Design adjustment: old backup private keys are kept for 365 days, because a roster can hand out a member's backup key long after it was replaced. This affects only reduced-protection messages.
 
 Not yet done:
@@ -306,7 +308,10 @@ A replay of a one-time-key message fails because the key is gone. Backup-key mes
 - Backup-key messages have weaker forward secrecy until that backup key is replaced.
 - Stored plaintext history is exactly as safe as the vault unlock (passphrase or biometrics, plus PIN).
 - The hybrid algorithms protect against one algorithm family failing. They do not protect against bugs in Enigma, Bouncy Castle or Android, or against a compromised phone.
-- The wrong-PIN count can be rolled back by someone who controls the phone at root level (by restoring an older pin.qkp). They still need the first unlock step for every try.
+- Someone who controls the phone at root level and also has the passphrase or a fingerprint can bypass the wrong-PIN count: root can use (not extract) the device Keystore key to read pin.qkp and then try all 10,000 PINs, each costing one Argon2id run. Without the first step this is not possible. The PIN protects a phone that is handed over or taken while running the normal Android system.
+- Backup and one-time keys carry an Ed25519 signature only, to keep key pools small (an ML-DSA signature would add 3,309 bytes per key). They only travel inside packets with a hybrid signature from their owner, or inside the owner-signed roster. The remaining gap: a group owner who could also forge Ed25519 could swap another member's keys in a roster. That needs an insider and a broken Ed25519; reading messages would still need X25519 or ML-KEM to fail as well for the identity part of the key.
+- Enigma holds Android's INTERNET permission because the local joining connection is a network socket; Android has no permission limited to the local network. Messages never use the network: they leave the app only as files or text the user shares.
+- The vault master key and the PIN salt come from Android's SecureRandom only; camera and motion input feed message and identity keys (decision 10).
 - AES-256-GCM is the only content cipher. It is not considered at risk from quantum computers, so no second symmetric layer was added.
 - The external messenger still sees who sends files to whom, when, and how large they are.
 
@@ -333,6 +338,7 @@ Planned work: per-message forward secrecy, separate signing/agreement identities
 
 ## Change log
 
+- 0.7.0 / 30 October 2026 (branch, security review): removed or blocked members' keys are now deleted when they are no longer in any group on the device; prekey signature, root PIN-guessing, INTERNET permission and vault-key randomness limits documented.
 - 0.7.0 / 30 October 2026 (branch): hybrid algorithms (X25519 + ML-KEM-768, Ed25519 + ML-DSA-65; ENG5, QKJ4/QKG4/QKA4, vault format 3) and two-step unlock (passphrase or biometrics, then a PIN; wipe after 5 wrong PINs or on the panic PIN).
 - 0.7.0 / 29 October 2026 (branch): Ed25519/X25519 identities in the vault, camera and motion entropy, X3DH one-time keys with per-contact pools and owner introductions, multiple recipients, view once, readable history stored encrypted in the vault, 0.6.0 vault upgrade screen; RSA formats removed.
 - Proposal / 29 October 2026: 0.7.0 message-security design recorded for owner sign-off (X25519/Ed25519, X3DH-style one-time keys with per-contact pools and owner reserve, multiple recipients, plaintext history in the vault, explicit owner group updates). Not implemented; the build remains 0.6.0.

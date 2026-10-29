@@ -33,7 +33,7 @@ Use disposable development data. To retain an installation, install over it and 
 
 ## JVM unit tests
 
-`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. `SealedProtocolTest`, `JoinProtocolTest`, `JoiningFlowTest`, `LocalJoinTest`, `JoinBootstrapTest` and `InboxTest` cover the 0.7.0 protocol: one-time keys, multiple recipients, group binding, key pools, entropy, joining, introductions, transport frames and labels. `SealedProtocolTest` also checks that damaging either the X25519 or the ML-KEM half of a key stops decryption, and that a signature needs both its Ed25519 and ML-DSA halves. `PinBoxTest` covers the PIN key, panic PIN and stored attempt count.
+`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. `SealedProtocolTest`, `JoinProtocolTest`, `JoiningFlowTest`, `LocalJoinTest`, `JoinBootstrapTest` and `InboxTest` cover the 0.7.0 protocol: one-time keys, multiple recipients, group binding, key pools, entropy, joining, introductions, transport frames and labels. `SealedProtocolTest` also checks that damaging either the X25519 or the ML-KEM half of a key stops decryption, and that a signature needs both its Ed25519 and ML-DSA halves. It also checks that removing or blocking a member deletes the keys shared with them unless they are still in another group, and that the owner reserve is kept. `PinBoxTest` covers the PIN key, panic PIN and stored attempt count.
 
 `PinLockTest` (instrumentation, opt-in `enigmaUiTest=true`, disposable emulator only) checks wrong-PIN counting, the wipe after the fifth wrong PIN and the panic-PIN wipe. Wiping deletes every Keystore key of the app; never run it on a phone.
 

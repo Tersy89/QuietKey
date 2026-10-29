@@ -59,6 +59,18 @@ public final class SealedProtocolTest {
         assertFalse(a.id.publicKey.verify(text,Arrays.copyOf(sig,64)));
         assertEquals(Identity.PUBLIC,Identity.Public.decode(a.id.publicKey.encode()).encode().length);
     }
+    /** Removing or blocking a member deletes every key shared with them, unless they are still in another group here. */
+    @Test public void removedMembersKeysAreForgottenUnlessStillInAnotherGroup(){
+        Protocol.Group other=new Protocol.Group(UUID.randomUUID().toString(),"Work",Protocol.random(32),now+KeyPools.DAY*3650,a.fp);
+        other.members.put(a.fp,group.members.get(a.fp));other.members.put(c.fp,group.members.get(c.fp));other.members.put(b.fp,group.members.get(b.fp));
+        assertTrue(b.pools.outstanding(d.fp)>0);assertTrue(b.pools.available(d.fp)>0);
+        group.members.remove(c.fp);group.blocked.add(d.fp); // c removed from Family but still in Work; d blocked
+        assertEquals(1,b.pools.forgetAllExcept(KeyPools.activeContacts(Arrays.asList(group,other),b.fp)));
+        assertEquals(0,b.pools.outstanding(d.fp));assertEquals(0,b.pools.available(d.fp));assertNull(b.pools.theirBackup(d.fp));
+        assertTrue(b.pools.available(c.fp)>0);assertTrue(b.pools.outstanding(c.fp)>0);assertNotNull(b.pools.theirBackup(a.fp));
+        int reserve=b.pools.issueReserve(b.id,entropy,now).size();assertEquals(KeyPools.RESERVE,reserve);
+        b.pools.forgetAllExcept(Collections.emptySet());assertEquals(KeyPools.RESERVE,b.pools.outstanding(KeyPools.RESERVE_CONTACT)); // owner reserve kept
+    }
     @Test public void recipientReadsOnceThenTheKeyIsGone()throws Exception{
         byte[] packet=send(a,"Gate code 4471",b);
         SealedProtocol.Opened o=receive(b,packet);

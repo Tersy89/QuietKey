@@ -94,6 +94,20 @@ public final class KeyPools {
         theirOneTime.remove(contact);theirBackup.remove(contact);heldReserve.remove(contact);
         for(Iterator<Owned> i=ownOneTime.values().iterator();i.hasNext();){Owned o=i.next();if(o.contact.equals(contact)){Arrays.fill(o.privateKey,(byte)0);i.remove();}}
     }
+    /**
+     * Keys are kept per person, not per group, so a contact is forgotten only when they are no
+     * longer a trusted member of any group on this device (removed, blocked, or their last group
+     * deleted). Own owner-reserve keys are kept. Returns how many contacts were forgotten.
+     */
+    public int forgetAllExcept(Set<String> keep){
+        Set<String> contacts=new HashSet<>(theirOneTime.keySet());contacts.addAll(theirBackup.keySet());contacts.addAll(heldReserve.keySet());
+        for(Owned o:ownOneTime.values())if(!o.contact.equals(RESERVE_CONTACT))contacts.add(o.contact);
+        int n=0;for(String c:contacts)if(!keep.contains(c)){forget(c);n++;}return n;
+    }
+    /** Every trusted member of every group except this device: the contacts whose keys are kept. */
+    public static Set<String> activeContacts(Collection<Protocol.Group> groups,String self){
+        Set<String> out=new HashSet<>();for(Protocol.Group g:groups)for(String m:g.members.keySet())if(!m.equals(self)&&!g.blocked.contains(m))out.add(m);return out;
+    }
     public void destroy(){for(Owned o:ownOneTime.values())Arrays.fill(o.privateKey,(byte)0);for(Owned o:ownBackups)Arrays.fill(o.privateKey,(byte)0);ownOneTime.clear();ownBackups.clear();theirOneTime.clear();theirBackup.clear();heldReserve.clear();}
 
     private static Owned create(Identity me,Entropy entropy,int kind,long now,String contact){

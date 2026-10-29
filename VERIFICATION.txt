@@ -1,3 +1,20 @@
+Enigma 0.7.0 security-review fixes - 30 October 2026 (branch feature/0.7.0-messages)
+
+A code and design review found that KeyPools.forget() had no callers: removed or blocked members'
+keys stayed in the vault, contrary to SYSTEM_DESIGN. Fix: KeyPools.forgetAllExcept/activeContacts,
+called when a member is removed or blocked, a group is deleted, or an adopted roster drops someone.
+Keys are per person, so someone still trusted in another group keeps their keys. Documented as
+accepted limits: Ed25519-only prekey signatures; root + first unlock step can try all PINs;
+INTERNET permission is for the local joining socket only; vault key from SecureRandom only.
+
+Executed on this PC: gradlew testDebugUnitTest assembleDebug lintDebug: success. 68 JVM unit tests,
+0 failures (new: SealedProtocolTest removedMembersKeysAreForgottenUnlessStillInAnotherGroup).
+Lint: 0 errors, 32 warnings.
+Not run: emulator or phone tests for this change (no screen changed). No new Enigma.apk yet; the
+owner is testing the versionCode 12 APK. The review is not an independent security audit.
+
+----------------------------------------------------------------------------------------------
+
 Enigma 0.7.0 hybrid algorithms and two-step unlock - 30 October 2026 (branch feature/0.7.0-messages)
 
 Owner request: a second algorithm family on top of the current one, and biometric + PIN unlock

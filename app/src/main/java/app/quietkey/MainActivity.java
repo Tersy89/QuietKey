@@ -219,7 +219,7 @@ public final class MainActivity extends FragmentActivity {
     private void newGroup() {editName("Create a group","",60,value->{pendingName=value;capturePurpose="group";beginHandoff();capture.launch(new Intent(this,CameraActivity.class).putExtra("purpose","group"));});}
     private void deleteGroup(Protocol.Group g) {
         transientDialog=new AlertDialog.Builder(this).setTitle("Remove "+g.name+"?").setMessage("This removes its secret, trusted members and replay history from this device. Other members keep their keys. Rejoining resets replay protection.")
-            .setNegativeButton("Keep group",null).setPositiveButton("Remove",(d,w)->work(()->{JoiningFlow.cancel(g.id,null,vault.pendingInvites,vault.invitationCache);vault.groups.remove(g);vault.history.removeIf(r->r.group.equals(g.id));if(g.id.equals(vault.personalGroupId))vault.personalGroupId=null;persist();cleanupHistory(vault);Arrays.fill(g.seed,(byte)0);return true;},ok->{if(selected==g)selected=vault.groups.isEmpty()?null:vault.groups.get(0);closeVerified();encryptedFile=null;chooseDefaultRecipient();render();})).show();
+            .setNegativeButton("Keep group",null).setPositiveButton("Remove",(d,w)->work(()->{JoiningFlow.cancel(g.id,null,vault.pendingInvites,vault.invitationCache);vault.groups.remove(g);vault.history.removeIf(r->r.group.equals(g.id));if(g.id.equals(vault.personalGroupId))vault.personalGroupId=null;pruneKeys();persist();cleanupHistory(vault);Arrays.fill(g.seed,(byte)0);return true;},ok->{if(selected==g)selected=vault.groups.isEmpty()?null:vault.groups.get(0);closeVerified();encryptedFile=null;chooseDefaultRecipient();render();})).show();
     }
     private boolean isOwner(Protocol.Group g){return ownId!=null && g.owner.equals(ownId);}
     private Protocol.Group group(String id){if(vault!=null)for(Protocol.Group g:vault.groups)if(g.id.equals(id))return g;return null;}
@@ -361,7 +361,7 @@ public final class MainActivity extends FragmentActivity {
             LinearLayout card=card();card.addView(label(memberName(g,id)+(id.equals(g.owner)?" · owner":" · "+g.memberStatus.getOrDefault(id,"Member")),18,WHITE));card.addView(label(pretty(id),12,MUTED));
             if(!id.equals(ownId)){
                 card.addView(button("Name this member",()->editName("Member name",g.memberNames.getOrDefault(id,""),40,value->work(()->{g.memberNames.put(id,value);persist();return true;},ok->render()))));
-                if(!id.equals(g.owner))card.addView(button("Remove local trust",()->transientDialog=new AlertDialog.Builder(this).setTitle("Remove local trust?").setMessage("This device will stop accepting this member's signatures and offering them as a recipient. Their existing group key is not revoked. Create a new group to replace a shared group secret.").setNegativeButton("Cancel",null).setPositiveButton("Remove",(d,w)->work(()->{JoiningFlow.cancel(g.id,id,vault.pendingInvites,vault.invitationCache);g.members.remove(id);g.memberNames.remove(id);g.memberStatus.remove(id);g.blocked.add(id);if(isOwner(g))JoinProtocol.signRoster(g,vault.identity,vault.pools,entropy,Collections.emptyMap());persist();return true;},ok->{chooseDefaultRecipient();render();})).show()));
+                if(!id.equals(g.owner))card.addView(button("Remove local trust",()->transientDialog=new AlertDialog.Builder(this).setTitle("Remove local trust?").setMessage("This device will stop accepting this member's signatures and offering them as a recipient. Their existing group key is not revoked. Create a new group to replace a shared group secret.").setNegativeButton("Cancel",null).setPositiveButton("Remove",(d,w)->work(()->{JoiningFlow.cancel(g.id,id,vault.pendingInvites,vault.invitationCache);g.members.remove(id);g.memberNames.remove(id);g.memberStatus.remove(id);g.blocked.add(id);if(isOwner(g))JoinProtocol.signRoster(g,vault.identity,vault.pools,entropy,Collections.emptyMap());pruneKeys();persist();return true;},ok->{chooseDefaultRecipient();render();})).show()));
             }body.addView(card);
         }
     }
@@ -496,10 +496,12 @@ public final class MainActivity extends FragmentActivity {
         String plain=o.viewOnce?"":storePlain(o.body);
         MessageRecord record=new MessageRecord(o.messageId,g.id,o.sender,ownId,o.viewOnce?"once":"file",plain,o.name,o.mime,"",o.createdAt,o.expiresAt,false,o.reducedProtection());
         SealedProtocol.accept(g,vault.pools,o);
-        JoinProtocol.Roster roster=JoinProtocol.openCarrier(g,o.carrier);if(roster!=null)JoinProtocol.adopt(g,roster,vault.identity,vault.pools);
+        JoinProtocol.Roster roster=JoinProtocol.openCarrier(g,o.carrier);if(roster!=null&&JoinProtocol.adopt(g,roster,vault.identity,vault.pools))pruneKeys();
         g.seen.add(o.messageId);if(isOwner(g))g.memberStatus.put(o.sender,"Joined");remember(record);
         return new Object[]{record,o.body,preview(o.mime,o.name,o.body)};
     }
+    /** Deletes keys of people who are no longer trusted members of any group here (removed, blocked or group deleted). */
+    private void pruneKeys(){vault.pools.forgetAllExcept(KeyPools.activeContacts(vault.groups,ownId));}
     private Object[] openStored(MessageRecord r)throws Exception{byte[] content=readPlain(r.payload);return new Object[]{r,content,preview(r.mime,r.name,content)};}
     /** Readable content for the in-app viewer stays in memory (FLAG_SECURE window). */
     private static Object preview(String mime,String name,byte[] content){
