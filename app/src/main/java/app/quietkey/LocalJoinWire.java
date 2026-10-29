@@ -8,7 +8,7 @@ import javax.crypto.Cipher;
 
 /** Bounded, ordered joining frames, encrypted with the one-time key from the owner's QR or NFC tap. */
 public final class LocalJoinWire implements AutoCloseable {
-    public static final int REQUEST=1, INVITATION=2, RECEIPT=3, DONE=4, MAX=30000;
+    public static final int REQUEST=1, INVITATION=2, RECEIPT=3, DONE=4, MAX=JoinProtocol.MAX_INVITATION;
     private static final int MAGIC=0x454A5731;
     private final DataInputStream in;
     private final DataOutputStream out;
@@ -28,8 +28,8 @@ public final class LocalJoinWire implements AutoCloseable {
     public static byte[] addressBytes(String address){if(!privateAddress(address))throw new IllegalArgumentException("A private IPv4 address is required");String[] parts=address.split("\\.");byte[] bytes=new byte[4];for(int i=0;i<4;i++)bytes[i]=(byte)Integer.parseInt(parts[i]);return bytes;}
     private static int expected(boolean owner,int index){if(index<0||index>1)throw new SecurityException("Joining exchange already complete");return owner?(index==0?INVITATION:DONE):(index==0?REQUEST:RECEIPT);}
     private static void validate(int type,String packet){
-        String prefix=type==REQUEST?"QKJ1:":type==INVITATION?"QKG2:":type==RECEIPT?"QKA1:":"Joined";
-        int limit=type==REQUEST?1600:type==RECEIPT?1500:type==DONE?6:MAX;
+        String prefix=type==REQUEST?JoinProtocol.REQUEST:type==INVITATION?JoinProtocol.INVITATION:type==RECEIPT?JoinProtocol.RECEIPT:"Joined";
+        int limit=type==REQUEST?JoinProtocol.MAX_REQUEST:type==RECEIPT?JoinProtocol.MAX_RECEIPT:type==DONE?6:MAX;
         if(packet==null||packet.length()>limit||!packet.startsWith(prefix)||(type==DONE&&!packet.equals(prefix)))throw new SecurityException("Unexpected joining packet");
         for(int i=0;i<packet.length();i++){char c=packet.charAt(i);if(c<33||c>126)throw new SecurityException("Invalid joining packet characters");}
     }

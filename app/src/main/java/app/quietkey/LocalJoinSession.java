@@ -17,10 +17,10 @@ public final class LocalJoinSession {
     public static void exchange(LocalJoinWire wire,boolean owner,String request,Approval approval,long deadline)throws Exception{
         if(owner){approval.status("Connected. Checking their device…");String incoming=wire.receive(LocalJoinWire.REQUEST);
             // Invalid signed requests never reach owner approval.
-            PairingProtocol.parseRequest(incoming);String invitation=waitFor(approval.invite(incoming),deadline);
+            JoinProtocol.parseRequest(incoming);String invitation=waitFor(approval.invite(incoming),deadline);
             wire.send(LocalJoinWire.INVITATION,invitation);approval.status("Invitation sent. Waiting for them to join…");
             waitFor(approval.receipt(wire.receive(LocalJoinWire.RECEIPT)),deadline);wire.send(LocalJoinWire.DONE,"Joined");
-        }else{PairingProtocol.parseRequest(request);wire.send(LocalJoinWire.REQUEST,request);approval.status("Connected. Waiting for the owner to approve…");
+        }else{JoinProtocol.parseRequest(request);wire.send(LocalJoinWire.REQUEST,request);approval.status("Connected. Waiting for the owner to approve…");
             String receipt=waitFor(approval.accept(wire.receive(LocalJoinWire.INVITATION)),deadline);wire.send(LocalJoinWire.RECEIPT,receipt);approval.status("Group saved. Confirming with owner…");wire.receive(LocalJoinWire.DONE);
         }
     }

@@ -1,5 +1,8 @@
 # Enigma 0.6.0 security model
 
+> **0.7.0 (branch feature/0.7.0-messages):** identities are now Ed25519/X25519 keys in the passphrase vault, not RSA in the Keystore. Messages use X3DH one-time keys, giving per-message forward secrecy except for "reduced protection" messages. Readable history is stored encrypted under the vault master key. Statements below about RSA, QKD3/file-v3 or ciphertext-only history describe 0.6.0. Since 30 October every key agreement is hybrid (X25519 + ML-KEM-768) and every packet signature is hybrid (Ed25519 + ML-DSA-65), so one broken algorithm family is not enough to read or forge a message. Unlocking takes the passphrase or biometrics and then a 4-digit PIN; five wrong PINs or the panic PIN (default 9999) erase the app. The wrong-PIN count can be rolled back on a rooted phone, though every try still needs the first step. A review on 30 October found removed or blocked members' keys were never deleted; they now are. Accepted limits from that review: backup and one-time keys carry only an Ed25519 signature (they travel inside hybrid-signed packets), and root access combined with the passphrase or a fingerprint can try all PINs. See SYSTEM_DESIGN.md "Limits that remain". Statements below that call biometrics an alternative to the passphrase, or say failed attempts never wipe, describe 0.6.0. See SYSTEM_DESIGN.md "0.7.0 message security" for the current model and its limits. Nothing here is a security audit.
+
+
 Development prototype, not independently audited. See SYSTEM_DESIGN.md for implemented architecture/formats and VERIFICATION.txt for executed evidence. SECURITY_REVIEW.md records the historical 0.3 findings; new 0.4 formats correct the independent group-secret requirement.
 
 ## Intended protection

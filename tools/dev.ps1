@@ -20,7 +20,7 @@ try {
     switch ($Action) {
         'build' { & .\gradlew.bat testDebugUnitTest assembleDebug lintDebug assembleDebugAndroidTest --console=plain }
         'protocol' {
-            & "$env:JAVA_HOME\bin\java.exe" '-Dfile.encoding=UTF-8' app/src/main/java/app/quietkey/Protocol.java
+            & .\gradlew.bat testDebugUnitTest --console=plain
             if ($LASTEXITCODE -ne 0) { throw 'Protocol checks failed.' }
             & "$env:JAVA_HOME\bin\java.exe" '-Dfile.encoding=UTF-8' tools/CheckSyntax.java
         }

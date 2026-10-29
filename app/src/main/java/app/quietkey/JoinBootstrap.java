@@ -25,7 +25,7 @@ public final class JoinBootstrap {
     public static JoinBootstrap hotspot(String ssid,String passphrase,int security,String address,int port,String owner){return create(HOTSPOT,ssid,passphrase,security,address,port,owner);}
     public static JoinBootstrap sameWifi(String address,int port,String owner){return create(SAME_WIFI,"","",WPA2,address,port,owner);}
     private static JoinBootstrap create(int mode,String ssid,String passphrase,int security,String address,int port,String owner){
-        JoinBootstrap b=new JoinBootstrap(mode,ssid,passphrase,security,address,port,Protocol.random(32),owner,System.currentTimeMillis()+PairingProtocol.WINDOW);b.check();return b;
+        JoinBootstrap b=new JoinBootstrap(mode,ssid,passphrase,security,address,port,Protocol.random(32),owner,System.currentTimeMillis()+JoinProtocol.WINDOW);b.check();return b;
     }
     private void check(){
         if(mode!=HOTSPOT&&mode!=SAME_WIFI)throw new SecurityException("Unsupported joining method");
@@ -45,7 +45,7 @@ public final class JoinBootstrap {
         byte[] kek=blob(in,32),owner=blob(in,32);long expires=in.readLong();end(in);
         String address=(ip[0]&255)+"."+(ip[1]&255)+"."+(ip[2]&255)+"."+(ip[3]&255);
         JoinBootstrap b=new JoinBootstrap(mode,ssid,passphrase,security,address,port,kek,Protocol.b64(owner),expires);b.check();
-        long now=System.currentTimeMillis();if(now>=expires||expires-now>PairingProtocol.WINDOW+60000)throw new SecurityException("This joining code has expired. Ask the owner to start the invitation again.");
+        long now=System.currentTimeMillis();if(now>=expires||expires-now>JoinProtocol.WINDOW+60000)throw new SecurityException("This joining code has expired. Ask the owner to start the invitation again.");
         return b;
     }
     /** Transport key for LocalJoinWire frames; domain-separated from everything else derived from the KEK. */
@@ -56,8 +56,8 @@ public final class JoinBootstrap {
         try{return digits(digest);}finally{Arrays.fill(digest,(byte)0);}
     }
     /** Manual file transfer has no shared KEK: both sides derive the code from the request and the owner's public key. */
-    public static String manualCheckCode(String request,PublicKey owner)throws Exception{
-        MessageDigest sha=MessageDigest.getInstance("SHA-256");sha.update("Enigma/manual-check/v1".getBytes(StandardCharsets.UTF_8));sha.update(request.trim().getBytes(StandardCharsets.US_ASCII));sha.update(owner.getEncoded());
+    public static String manualCheckCode(String request,Identity.Public owner)throws Exception{
+        MessageDigest sha=MessageDigest.getInstance("SHA-256");sha.update("Enigma/manual-check/v3".getBytes(StandardCharsets.UTF_8));sha.update(request.trim().getBytes(StandardCharsets.US_ASCII));sha.update(owner.encode());
         return digits(sha.digest());
     }
     private static String digits(byte[] digest){long value=((digest[0]&255L)<<24|(digest[1]&255L)<<16|(digest[2]&255L)<<8|(digest[3]&255L))%1000000L;String s=String.format(Locale.ROOT,"%06d",value);return s.substring(0,3)+" "+s.substring(3);}

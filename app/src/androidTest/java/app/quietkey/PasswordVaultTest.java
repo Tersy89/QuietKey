@@ -25,11 +25,11 @@ public final class PasswordVaultTest {
             master=lock.create(first);assertEquals(32,master.length);assertTrue(lock.configured());
             assertThrows(SecurityException.class,()->new Vault(context));
             Protocol.Group group;
-            try(Vault vault=new Vault(context,master)){vault.deviceName="Protected device";group=Protocol.create("Protected group",Protocol.random(32),vault.publicKey());PairingProtocol.signRoster(group,vault.publicKey(),vault.privateKey());vault.groups.add(group);vault.save();assertNull(vault.privateKey().getEncoded());}
+            String identity;try(Vault vault=new Vault(context,master)){Entropy entropy=new Entropy();entropy.addMotion(1,1L,new float[]{1f});vault.deviceName="Protected device";vault.identity=Identity.generate(entropy);identity=vault.identity.fingerprint();group=JoinProtocol.create("Protected group","Protected device",vault.identity,vault.pools,entropy);vault.groups.add(group);vault.save();}
             File stored=new File(directory,"groups.qkv");byte[] ciphertext=Files.readAllBytes(stored.toPath());assertEquals(2,ciphertext[0]);assertFalse(new String(ciphertext,java.nio.charset.StandardCharsets.ISO_8859_1).contains("Protected group"));
             assertThrows(Exception.class,()->lock.unlock("Wrong emulator password".toCharArray()));
             byte[] unlocked=lock.unlock(first);assertArrayEquals(master,unlocked);
-            Vault reopened=new Vault(context,unlocked);assertEquals("Protected device",reopened.deviceName);assertEquals(group.roster,reopened.groups.get(0).roster);byte[] loadedSeed=reopened.groups.get(0).seed;reopened.close();assertArrayEquals(new byte[32],loadedSeed);assertThrows(IllegalStateException.class,reopened::privateKey);assertThrows(IllegalStateException.class,reopened::save);
+            Vault reopened=new Vault(context,unlocked);assertEquals("Protected device",reopened.deviceName);assertEquals(identity,reopened.identity.fingerprint());assertFalse(reopened.legacy);assertEquals(group.roster,reopened.groups.get(0).roster);byte[] loadedSeed=reopened.groups.get(0).seed;reopened.close();assertArrayEquals(new byte[32],loadedSeed);assertThrows(IllegalStateException.class,reopened::copyMaster);assertThrows(IllegalStateException.class,reopened::save);
             lock.replace(next,unlocked);assertThrows(Exception.class,()->lock.unlock(first));byte[] changed=lock.unlock(next);assertArrayEquals(master,changed);
             try(Vault preserved=new Vault(context,changed)){assertEquals(1,preserved.groups.size());assertEquals("Protected device",preserved.deviceName);}
             byte[] wrong=changed.clone();wrong[0]^=1;assertThrows(Exception.class,()->new Vault(context,wrong));Arrays.fill(wrong,(byte)0);

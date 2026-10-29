@@ -9,7 +9,7 @@ import static org.junit.Assert.*;
 
 public final class InboxTest {
     private static MessageRecord record(String id,String group,String sender,String recipient,String name,long created,boolean outgoing){
-        return new MessageRecord(id,group,sender,recipient,"file",UUID.randomUUID()+".enigma",name,created,0,outgoing);
+        return new MessageRecord(id,group,sender,recipient,"file",UUID.randomUUID()+".plain",name,Inbox.TEXT_NAME.equals(name)?Inbox.TEXT_MIME:"application/pdf","",created,0,outgoing,false);
     }
     @Test public void chatsGroupByGroupAndOtherPersonNewestFirst(){
         List<MessageRecord> history=Arrays.asList(
@@ -29,7 +29,8 @@ public final class InboxTest {
     @Test public void labelsAndPreviewLimits(){
         assertEquals("Message",Inbox.label(record("1","g","a","b",Inbox.TEXT_NAME,1,false)));
         assertEquals("holiday.jpg",Inbox.label(record("1","g","a","b","holiday.jpg",1,false)));
-        assertEquals("Message (sent as text)",Inbox.label(new MessageRecord("1","g","a","b","text","QKD3:x","Private text",1,0,false)));
+        assertEquals("Message",Inbox.label(new MessageRecord("1","g","a","b","file",UUID.randomUUID()+".plain",Inbox.TEXT_NAME,Inbox.TEXT_MIME,"",1,0,false,false)));
+        assertEquals("Message (view once)",Inbox.label(new MessageRecord("2","g","a","b","once","",Inbox.TEXT_NAME,Inbox.TEXT_MIME,"",1,0,false,false)));
         assertEquals(Inbox.IMAGE,Inbox.preview("image/jpeg","x.jpg",1000));
         assertEquals(Inbox.OTHER,Inbox.preview("image/jpeg","x.jpg",Inbox.IMAGE_PREVIEW+1));
         assertEquals(Inbox.OTHER,Inbox.preview("image/svg+xml","x.svg",1000));
@@ -40,19 +41,16 @@ public final class InboxTest {
         assertEquals(Inbox.OTHER,Inbox.preview(null,null,10));
         assertTrue(Inbox.typed(Inbox.TEXT_NAME,Inbox.TEXT_MIME));assertFalse(Inbox.typed("message.txt","application/octet-stream"));
     }
-    /** A typed message is sent as a .enigma file; the recipient restores exactly the text, and its name/type mark it as a message. */
-    @Test public void typedMessageTravelsAsEnigmaFile()throws Exception{
-        KeyPairGenerator generator=KeyPairGenerator.getInstance("RSA");generator.initialize(2048);KeyPair a=generator.generateKeyPair(),b=generator.generateKeyPair();
-        Protocol.Group group=Protocol.create("Chat",Protocol.random(32),a.getPublic());group.members.put(Protocol.fingerprint(b.getPublic()),Protocol.b64(b.getPublic().getEncoded()));
-        Protocol.Group receiver=Protocol.accept(Protocol.invite(group,b.getPublic(),a.getPublic(),a.getPrivate()),b.getPublic(),b.getPrivate());
-        String text="Héllo 👋\nsee you at 6";File file=File.createTempFile("enigma-message-",".enigma");
-        try{
-            try(OutputStream out=new FileOutputStream(file)){FileProtocol.encrypt(group,Protocol.fingerprint(b.getPublic()),new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)),out,Inbox.TEXT_NAME,Inbox.TEXT_MIME,a.getPublic(),a.getPrivate());}
-            assertEquals(receiver.id,FileProtocol.groupId(file));
-            try(FileProtocol.Verified v=FileProtocol.inspect(receiver,file,b.getPublic(),b.getPrivate())){
-                assertTrue(Inbox.typed(v.name,v.mime));assertEquals(Inbox.TEXT,Inbox.preview(v.mime,v.name,v.size));assertEquals(Protocol.fingerprint(a.getPublic()),v.sender);
-                ByteArrayOutputStream out=new ByteArrayOutputStream();FileProtocol.restore(v,out);assertEquals(text,new String(out.toByteArray(),StandardCharsets.UTF_8));
-            }
-        }finally{file.delete();}
+    /** A typed message is sent as a .enigma package; the recipient gets exactly the text, and its name/type mark it as a message. */
+    @Test public void typedMessageTravelsAsEnigmaPackage()throws Exception{
+        TestDevice a=new TestDevice(),b=new TestDevice();long now=System.currentTimeMillis();
+        Protocol.Group group=JoinProtocol.create("Chat","A",a.id,a.pools,TestDevice.E);
+        String request=JoinProtocol.request(b.id,b.pools,TestDevice.E,"B");Protocol.Group receiver=JoinProtocol.accept(JoinProtocol.invite(group,JoinProtocol.parseRequest(request),a.id,a.pools,TestDevice.E),request,b.id,b.pools);
+        String text="Héllo 👋\nsee you at 6";
+        byte[] packet=SealedProtocol.seal(group,a.id,a.pools.backup(a.id,TestDevice.E,now),Collections.singletonList(new SealedProtocol.Recipient(b.id.publicKey,a.pools.theirBackup(b.fp),a.pools.take(b.fp),null)),
+            new SealedProtocol.Content(Inbox.TEXT_NAME,Inbox.TEXT_MIME,text.getBytes(StandardCharsets.UTF_8),0,false),JoinProtocol.carrier(group),TestDevice.E);
+        assertEquals(receiver.id,SealedProtocol.groupOf(SealedProtocol.fromText(SealedProtocol.toText(packet).replaceAll("(.{60})","$1\n"))));
+        SealedProtocol.Opened o=SealedProtocol.open(receiver,b.id,b.pools,packet);
+        assertTrue(Inbox.typed(o.name,o.mime));assertEquals(Inbox.TEXT,Inbox.preview(o.mime,o.name,o.body.length));assertEquals(a.fp,o.sender);assertEquals(text,new String(o.body,StandardCharsets.UTF_8));
     }
 }

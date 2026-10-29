@@ -33,7 +33,7 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
     }
     private final Activity activity;private final boolean owner,sameWifi;private final String request;private final Callbacks callbacks;
     private final Handler ui=new Handler(Looper.getMainLooper());private final ExecutorService io=Executors.newSingleThreadExecutor();
-    private final long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(PairingProtocol.WINDOW);
+    private final long deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(JoinProtocol.WINDOW);
     private volatile boolean closed,committed,ended,requestSeen,started;private volatile Closeable channel;private volatile ServerSocket server;
     private WifiManager.LocalOnlyHotspotReservation reservation;private ConnectivityManager.NetworkCallback networkCallback;private boolean readerOn,pollingQuiet;
     private volatile JoinBootstrap bootstrap;private TextView status;private LinearLayout content;
@@ -48,7 +48,7 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
         ScrollView scroll=new ScrollView(getContext());content=column();scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         status=text("",16);content.addView(status);setContentView(root);getWindow().setLayout(-1,-1);
         setOnDismissListener(d->{close();callbacks.stopped();});
-        ui.postDelayed(()->{if(!closed&&!ended)failure("Joining timed out after five minutes. Start again for a fresh code.");},PairingProtocol.WINDOW);
+        ui.postDelayed(()->{if(!closed&&!ended)failure("Joining timed out after five minutes. Start again for a fresh code.");},JoinProtocol.WINDOW);
         if(owner){if(sameWifi)startSameWifi();else startHotspot();}else recipientChoices();
     }
 
@@ -97,7 +97,7 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
             ui.post(()->showOwnerCode(code));byte[] key=boot.transportKey();
             try{int failed=0;while(!closed&&!ended&&System.nanoTime()<deadline){Socket socket;try{socket=opened.accept();}catch(SocketTimeoutException e){continue;}channel=socket;socket.setSoTimeout(10000);
                 try(LocalJoinWire wire=new LocalJoinWire(socket.getInputStream(),socket.getOutputStream(),true,key)){
-                    String packet=wire.receive(LocalJoinWire.REQUEST);PairingProtocol.parseRequest(packet);requestSeen=true;JoinNfcService.clear();socket.setSoTimeout((int)PairingProtocol.WINDOW);
+                    String packet=wire.receive(LocalJoinWire.REQUEST);JoinProtocol.parseRequest(packet);requestSeen=true;JoinNfcService.clear();socket.setSoTimeout((int)JoinProtocol.WINDOW);
                     status("Check that the other phone shows the same check code, then confirm.");
                     String invitation=callbacks.invite(packet,boot.checkCode(packet)).get(remaining(),TimeUnit.NANOSECONDS);wire.send(LocalJoinWire.INVITATION,invitation);status("Invitation sent. Waiting for them to join…");
                     callbacks.receipt(wire.receive(LocalJoinWire.RECEIPT)).get(remaining(),TimeUnit.NANOSECONDS);wire.send(LocalJoinWire.DONE,"Joined");complete();return;
@@ -182,7 +182,7 @@ final class NearbyJoinDialog extends Dialog implements AutoCloseable {
     private void connect(Network network,JoinBootstrap b,String check){
         List<String> targets=new ArrayList<>(Collections.singletonList(b.address));String gateway=gateway(network);if(gateway!=null&&!targets.contains(gateway))targets.add(gateway);
         Exception last=null;
-        for(String target:targets){Socket socket=new Socket();channel=socket;try{if(closed)return;network.bindSocket(socket);socket.connect(new InetSocketAddress(InetAddress.getByAddress(LocalJoinWire.addressBytes(target)),b.port),10000);socket.setSoTimeout((int)PairingProtocol.WINDOW);
+        for(String target:targets){Socket socket=new Socket();channel=socket;try{if(closed)return;network.bindSocket(socket);socket.connect(new InetSocketAddress(InetAddress.getByAddress(LocalJoinWire.addressBytes(target)),b.port),10000);socket.setSoTimeout((int)JoinProtocol.WINDOW);
                 exchange(socket.getInputStream(),socket.getOutputStream(),b,check);return;}
             catch(IOException e){last=e;try{socket.close();}catch(IOException ignored){}}}
         if(!closed)failure("Could not reach the owner's phone. Make sure their invite screen is still open, then scan again."+(last==null?"":""));
