@@ -133,7 +133,7 @@ public final class Protocol {
         String text = new String(clear, StandardCharsets.UTF_8); Arrays.fill(clear, (byte) 0);
         return new Opened(text, sender, messageId); // caller must persist seen ID before displaying cleartext
     }
-    private static void live(Group g) { if (System.currentTimeMillis() >= g.expires) throw new SecurityException("Group expired. Create and pair a new group"); }
+    static void live(Group g) { if (System.currentTimeMillis() >= g.expires) throw new SecurityException("Group expired. Create and pair a new group"); }
     private static byte[] messageKey(byte[] seed, byte[] id, byte[] header) throws Exception {
         return hkdf(seed, id, MessageDigest.getInstance("SHA-256").digest(header));
     }

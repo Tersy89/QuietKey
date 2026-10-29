@@ -172,6 +172,24 @@ No forward secrecy, ratchet, post-compromise recovery, owner transfer, key expor
 
 Everything in this section is a proposal agreed in discussion with the owner on 29 October 2026. None of it exists in the current build, and the rest of this document still describes 0.6.0. It will move into the implemented sections only with the code and executed tests.
 
+**Implementation status (branch feature/0.7.0-messages, 29 October 2026):** the pure-Java protocol layer exists but is not yet used by the app:
+
+- `Entropy`: OS randomness plus camera and motion-sensor mixing.
+- `Identity`: Ed25519 signing and X25519 agreement keys.
+- `PreKey`: signed backup and one-time keys.
+- `KeyPools`: per-contact pools, owner reserve, 30-day backup rotation with grace, and vault encoding.
+- `SealedProtocol`: the ENG4 package, X3DH, multiple recipients, signed inner header, and refill/backup carriage.
+
+These are covered by `SealedProtocolTest` (16 JVM tests).
+
+Not yet done:
+- vault and Keystore storage;
+- joining (identity exchange, initial pools, owner reserve forwarding);
+- group updates, second admin and rekey on removal;
+- sensor collection;
+- the Send/Receive UI and history-in-vault;
+- chunked streaming for large files (ENG4 currently holds content in memory, up to 50 MiB).
+
 ### Goals
 
 Designs that must be kept and enforced:

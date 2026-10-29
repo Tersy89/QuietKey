@@ -31,6 +31,10 @@ Alternatively sign into GitHub and download root [Enigma.apk from main](https://
 
 Use disposable development data. To retain an installation, install over it and keep the signing key; uninstall/clear-data loses its keys. Do not uninstall to bypass a signing mismatch. Old data/format compatibility is not a supported release commitment.
 
+## JVM unit tests
+
+`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. On branch feature/0.7.0-messages, `SealedProtocolTest` covers the 0.7.0 protocol layer (one-time keys, multiple recipients, group binding, key pools and entropy mixing). That layer is not used by the app yet, so there are no phone checks for it yet.
+
 ## Automated Android checks
 
 The device-tests helper installs with adb install -r and runs instrumentation directly. Default Keystore signing/OAEP/file/vault tests use isolated file contexts and preserve the user's stored vault. Password-vault, UI, QR and biometric tests are explicitly skipped unless running the opted-in generic disposable emulator.

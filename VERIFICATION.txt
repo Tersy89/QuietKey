@@ -1,3 +1,35 @@
+Enigma 0.7.0 protocol layer — 29 October 2026 (branch feature/0.7.0-messages; not in the app yet)
+
+Added pure-Java Entropy, Identity, PreKey, KeyPools and SealedProtocol (ENG4) per the 0.7.0
+proposal in SYSTEM_DESIGN.md. Protocol.live became package-visible. No Android, vault, joining or UI
+code uses them yet; the APK is unchanged.
+
+Executed on this PC (Windows, JDK 17.0.20.1, Gradle 8.9): gradlew testDebugUnitTest — 105 JVM unit
+tests, 0 failures (89 existing plus 16 in SealedProtocolTest).
+
+SealedProtocolTest covers:
+- one-time key deleted after reading (a second open fails);
+- multiple recipients, with a non-recipient member refused;
+- wrong group secret refused;
+- backup-key fallback marked reduced protection;
+- refill keys used and consumed in a reply;
+- tampering at three positions;
+- empty, self, non-member and duplicate recipients refused;
+- keys signed by the wrong member refused;
+- blocked sender refused;
+- expiry;
+- view-once, routing and carrier fields;
+- key-pool and identity vault round trip;
+- backup rotation and grace expiry;
+- full-pool re-send and owner reserve limit;
+- forgetting a member;
+- entropy mixing.
+
+These are unit tests, not a security audit. Not run: assembleDebug, lint and device tests (no app
+code changed).
+
+----------------------------------------------------------------------------------------------
+
 Enigma 0.6.0 development verification — 28 October 2026
 
 Branch feature/joining-0.5 (continues PR #2). README.md, SECURITY.md, TESTING.md, VERIFICATION.txt
