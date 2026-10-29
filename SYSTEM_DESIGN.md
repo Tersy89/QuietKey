@@ -207,7 +207,7 @@ Non-goal: compatibility with OpenPGP or GnuPG.
 - **One-time keys**: X25519, numbered and signed by the identity key, because they travel through untrusted messengers. Each member keeps a separate pool *per contact* (default 100), so two senders never use the same key. Each key is used for exactly one message; its private half is deleted after that message is authenticated and decrypted.
 - **Owner reserve**: on joining, each member also gives the owner a signed batch of public one-time keys "for future members". The owner allocates each reserve key to exactly one later joiner. The reserve is public keys only, so the owner cannot read anything with it.
 - **Group secret**: unchanged (32 bytes per group). It is mixed into every message key, so a valid one-time key without group membership cannot decrypt.
-- **Randomness**: an HMAC-DRBG seeded by HKDF from OS randomness plus the live camera digest. It is reseeded with OS randomness for every generation and with camera input whenever the camera is used, so refills need no new photo. As today, OS randomness is the security foundation; camera input is not a measured entropy guarantee.
+- **Randomness**: an HMAC-DRBG seeded by HKDF from OS randomness plus the live camera digest and motion-sensor readings (decision 10). It is reseeded with OS randomness for every generation, with motion-sensor readings while the app is open, and with camera input whenever the camera is used, so refills need no new photo. As today, OS randomness is the security foundation; camera input is not a measured entropy guarantee.
 
 ### Sending
 
@@ -227,7 +227,7 @@ Non-goal: compatibility with OpenPGP or GnuPG.
    - the sender's current backup key if it changed.
 6. Ephemeral private keys are deleted immediately. The sender's plaintext copy is kept in the vault (see History).
 
-**Empty pool (assumed default, to confirm):** send using the recipient's backup key. Both sides show "reduced protection" on that message until a refill arrives. The recipient can also send a stand-alone signed refill file.
+**Empty pool (agreed):** send using the recipient's backup key. Both sides show "reduced protection" on that message until a refill arrives. The recipient can also send a stand-alone signed refill file.
 
 ### Receiving
 
@@ -265,17 +265,18 @@ A replay of a one-time-key message fails because the key is gone. Backup-key mes
 - Stored plaintext history is exactly as safe as the vault passphrase.
 - The external messenger still sees who sends files to whom, when, and how large they are.
 
-### Open questions
+### Decisions (agreed with the owner, 29 October 2026)
 
-1. Owner loss: accept rebuilding the group, a second admin, or a two-member quorum?
-2. On removal, should the group secret also be replaced (sent inside the signed update)?
-3. How does a member announce their own identity is compromised, through the owner's update, and then rejoin?
-4. Do recipients of a multi-recipient message see the other recipients? The proposed default is yes; the list is signed.
-5. Camera reseeding: only when the camera is used, or also a periodic prompt?
-6. Confirm that all members rejoining for 0.7.0 is acceptable.
-7. Key storage: the Android Keystore supports Ed25519/X25519 only on newer Android versions. Should identity keys live in the Keystore where available, or always in the vault for one consistent design?
-8. Defaults: pool size per contact, owner reserve size, refill count per message, and backup-key lifetime.
-9. Confirm the empty-pool default (send with "reduced protection" rather than refuse).
+1. **Owner loss**: the owner may name a second admin, who can also send signed group updates. Without one, a lost owner phone means rebuilding the group in person.
+2. **Removal**: removing a member also replaces the group secret. The new secret travels inside the signed update to each remaining member.
+3. **Own compromise**: the member tells the owner, who sends an update marking the old identity revoked. The member then rejoins in person with new keys.
+4. **Multiple recipients**: every recipient sees the signed recipient list, like an email "To:" line.
+5. **Camera reseeding**: whenever the camera is already in use, for example when joining. There is no extra prompt.
+10. **Motion sensors as a second extra source**: the generator also mixes in accelerometer and gyroscope readings (values plus timing) gathered while Enigma is open and unlocked. These sensors need no Android permission, and they still contribute when the camera is broken, covered or dark. The microphone was considered and rejected: it adds little beyond the camera and would need audio-recording permission. As with the camera, OS randomness remains the security foundation; sensor input is not a measured entropy guarantee.
+6. **Format change**: all members rejoin in person for 0.7.0.
+7. **Key storage**: identity keys live in the Android Keystore where the device supports Ed25519/X25519, otherwise in the passphrase-protected vault. The app shows which one is used.
+8. **Defaults**: 100 one-time keys per contact, 20 owner-reserve keys per member, up to 10 refill keys per message, and a new backup key every 30 days.
+9. **Empty pool**: send using the backup key with a "reduced protection" mark rather than refuse.
 
 ## Verification and future work
 
