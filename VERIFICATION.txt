@@ -27,7 +27,11 @@ Not run:
 - any two-device joining or messaging;
 - the 0.6.0 to 0.7.0 upgrade screen;
 - physical phones.
-No Enigma.apk was produced; that happens when the branch is merged on the owner's request.
+Test APK (owner request, 29 October 2026): Enigma.apk on this branch only, built clean from 60b7d4b.
+- app.quietkey.debug 0.7.0-debug (versionCode 11), 6,339,254 bytes.
+- SHA-256 D164A79132E8C9D3B359E4A1EF08F925CA2537E24022466D5F5C78A399BFF295.
+- Debug signer 2aca54e2...836b7, the same as 0.6.0, so it installs as an update.
+main still has 0.6.0.
 These are tests, not a security audit.
 
 ----------------------------------------------------------------------------------------------
