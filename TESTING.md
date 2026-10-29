@@ -33,7 +33,17 @@ Use disposable development data. To retain an installation, install over it and 
 
 ## JVM unit tests
 
-`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. On branch feature/0.7.0-messages, `SealedProtocolTest` and `JoinProtocolTest` cover the 0.7.0 protocol layer: one-time keys, multiple recipients, group binding, key pools, entropy mixing, joining and introductions between later members. That layer is not used by the app yet, so there are no phone checks for it yet.
+`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. `SealedProtocolTest`, `JoinProtocolTest`, `JoiningFlowTest`, `LocalJoinTest`, `JoinBootstrapTest` and `InboxTest` cover the 0.7.0 protocol: one-time keys, multiple recipients, group binding, key pools, entropy, joining, introductions, transport frames and labels.
+
+## 0.7.0 - priority phone checks (not yet run)
+
+1. Install over 0.6.0. The app should show "New keys needed" and keep the old data. Start fresh asks for the passphrase and confirmation, then runs camera setup.
+2. Join a second phone nearby (QR and NFC) and by file. Both phones should show matching check codes.
+3. Send a message from each phone to the other. Neither should say "Reduced protection". Opening the same .enigma file a second time shows the stored copy.
+4. Join a third phone. After the owner sends any message to the second phone, the second and third phones message each other without "Reduced protection".
+5. Send one message to two people. Both open it; a third member gets "not addressed to you".
+6. View once: the message opens once and is not listed as openable afterwards.
+7. Send as text: paste the ENG4: text into a chat and open it with Receive, then Open pasted text.
 
 ## Automated Android checks
 
@@ -45,7 +55,7 @@ Do not run Gradle connectedDebugAndroidTest on a retained phone installation: it
 .\gradlew.bat connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.enigmaUiTest=true'
 ```
 
-The UI test (EnigmaUiTest, updated for 0.6.0 but not yet re-run on the emulator) covers password creation/unlock, live emulated-camera setup, tabs, explicit recipients on Messages → Send, Send as text instead with TTL, pasted-text opening and external replay rejection, reopening from a conversation, background/manual lock clearing the draft, a 200,000-byte file sent as .enigma through Android's actual picker, saved for USB from the conversation, reopened through Receive → Open .enigma file and restored with fresh authentication, guide/reset cancellation and FLAG_SECURE. Sharing opens Android's share sheet, which locks Enigma; the test dismisses it and unlocks again. InboxTest (JVM) covers conversation grouping/order, labels, preview limits and a typed message round-tripping as a .enigma file. JoiningFlowTest, JoinBootstrapTest, LocalJoinTest and PairingProtocolTest cover joining; QrImageTest covers the single joining QR.
+EnigmaUiTest was removed in 0.7.0. It still drove screens removed in 0.5.0 and had not run since; ScreenshotTest is the current emulator walkthrough. The removed UI test covers password creation/unlock, live emulated-camera setup, tabs, explicit recipients on Messages → Send, Send as text instead with TTL, pasted-text opening and external replay rejection, reopening from a conversation, background/manual lock clearing the draft, a 200,000-byte file sent as .enigma through Android's actual picker, saved for USB from the conversation, reopened through Receive → Open .enigma file and restored with fresh authentication, guide/reset cancellation and FLAG_SECURE. Sharing opens Android's share sheet, which locks Enigma; the test dismisses it and unlocks again. InboxTest (JVM) covers conversation grouping/order, labels, preview limits and a typed message round-tripping as a .enigma file. JoiningFlowTest, JoinBootstrapTest, LocalJoinTest and PairingProtocolTest cover joining; QrImageTest covers the single joining QR.
 
 The password-vault test checks device-bound encryption, wrong password/key/corrupt vault/envelope failures, closed-session key clearing and password replacement without changing stored groups. It is emulator-only because changing password protection disables the app's shared biometric alias.
 

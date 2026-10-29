@@ -12,7 +12,8 @@ import org.junit.*;
 import org.junit.runner.RunWith;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.security.*;
+import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.Assert.*;
@@ -41,40 +42,51 @@ public final class ScreenshotTest {
             clickCard(s,"beach.jpg");waitFor(s,"Back to chat");shot(s,"04-photo");
             click(s,"Back to chat");clickCard(s,"Message");waitFor(s,"Back to chat");shot(s,"05-message");
             click(s,"Messages");click(s,"Send");waitFor(s,"1 · MESSAGE OR FILE");
-            s.onActivity(a->{editor(a.getWindow().getDecorView()).setText("The new Wi-Fi password is on the fridge 🙂");List<Spinner> p=new ArrayList<>();spinners(a.getWindow().getDecorView(),p);p.get(1).setSelection(1);});Thread.sleep(300);shot(s,"06-send");
+            s.onActivity(a->{editor(a.getWindow().getDecorView()).setText("The new Wi-Fi password is on the fridge 🙂");((CheckBox)((View)findPrefix(a.getWindow().getDecorView(),"Sam ·"))).setChecked(true);});Thread.sleep(300);shot(s,"06-send");
             click(s,"Messages");click(s,"Receive");waitFor(s,"Open .enigma file");shot(s,"07-receive");
             click(s,"Groups");waitFor(s,"Create a group");shot(s,"08-groups");
             click(s,"Join group");Thread.sleep(500);shot(s,"09-join");
         }
     }
 
+    private static final Entropy ENTROPY=new Entropy();
+    private static final class Demo {
+        final Identity id=Identity.generate(ENTROPY);final KeyPools pools=new KeyPools();final String fp=id.fingerprint();
+    }
     private void seed(Context context)throws Exception{
+        ENTROPY.addCamera(MessageDigest.getInstance("SHA-256").digest("screenshot demo".getBytes(StandardCharsets.UTF_8)));
         byte[] key=new PasswordLock(context).create(PASS.toCharArray());Vault v;try{v=new Vault(context,key);}finally{Arrays.fill(key,(byte)0);}
-        KeyPairGenerator gen=KeyPairGenerator.getInstance("RSA");gen.initialize(2048);KeyPair sam=gen.generateKeyPair(),jordan=gen.generateKeyPair();
-        String me=Protocol.fingerprint(v.publicKey()),samId=Protocol.fingerprint(sam.getPublic()),jordanId=Protocol.fingerprint(jordan.getPublic());
-        v.deviceName="Alex's phone";v.setupCompleted=true;v.setupCapturedAt=System.currentTimeMillis();
-        Protocol.Group family=group(v,"Family",me),work=group(v,"Work",me);v.personalGroupId=family.id;
+        v.deviceName="Alex's phone";v.setupCompleted=true;v.setupCapturedAt=System.currentTimeMillis();v.identity=Identity.generate(ENTROPY);
+        Demo sam=new Demo(),jordan=new Demo();
+        Protocol.Group family=JoinProtocol.create("Family",v.deviceName,v.identity,v.pools,ENTROPY),work=JoinProtocol.create("Work",v.deviceName,v.identity,v.pools,ENTROPY);
+        v.groups.add(family);v.groups.add(work);v.personalGroupId=family.id;
         member(v,family,sam,"Sam");member(v,family,jordan,"Jordan");member(v,work,jordan,"Jordan");
-        File dir=new File(context.getFilesDir(),"packages");assertTrue(dir.isDirectory()||dir.mkdirs());long now=System.currentTimeMillis();
-        file(v,dir,family,sam,me,Inbox.TEXT_NAME,Inbox.TEXT_MIME,"Gate code for Saturday is 4471. See you at 6!".getBytes(StandardCharsets.UTF_8),false,now-95*MIN);
-        file(v,dir,family,null,samId,Inbox.TEXT_NAME,Inbox.TEXT_MIME,"Perfect, thanks. Sending the signed lease now.".getBytes(StandardCharsets.UTF_8),true,now-90*MIN);
-        file(v,dir,family,null,samId,"Lease 2026 signed.pdf","application/pdf","%PDF-1.4 demo".getBytes(StandardCharsets.US_ASCII),true,now-89*MIN);
-        file(v,dir,family,sam,me,"beach.jpg","image/jpeg",photo(),false,now-12*MIN);
-        file(v,dir,work,jordan,me,"Q3 board pack.pdf","application/pdf","%PDF-1.4 demo".getBytes(StandardCharsets.US_ASCII),false,now-180*MIN);
-        file(v,dir,family,jordan,me,Inbox.TEXT_NAME,Inbox.TEXT_MIME,"Passport scan is in the safe, not the drawer.".getBytes(StandardCharsets.UTF_8),false,now-30*MIN);
+        long now=System.currentTimeMillis();
+        file(context,v,family,sam,Inbox.TEXT_NAME,Inbox.TEXT_MIME,"Gate code for Saturday is 4471. See you at 6!".getBytes(StandardCharsets.UTF_8),false,now-95*MIN);
+        file(context,v,family,sam,Inbox.TEXT_NAME,Inbox.TEXT_MIME,"Perfect, thanks. Sending the signed lease now.".getBytes(StandardCharsets.UTF_8),true,now-90*MIN);
+        file(context,v,family,sam,"Lease 2026 signed.pdf","application/pdf","%PDF-1.4 demo".getBytes(StandardCharsets.US_ASCII),true,now-89*MIN);
+        file(context,v,family,sam,"beach.jpg","image/jpeg",photo(),false,now-12*MIN);
+        file(context,v,work,jordan,"Q3 board pack.pdf","application/pdf","%PDF-1.4 demo".getBytes(StandardCharsets.US_ASCII),false,now-180*MIN);
+        file(context,v,family,jordan,Inbox.TEXT_NAME,Inbox.TEXT_MIME,"Passport scan is in the safe, not the drawer.".getBytes(StandardCharsets.UTF_8),false,now-30*MIN);
         v.save();v.close();
     }
-    private static Protocol.Group group(Vault v,String name,String me)throws Exception{
-        Protocol.Group g=Protocol.create(name,Protocol.random(32),v.publicKey());g.memberNames.put(me,v.deviceName);PairingProtocol.signRoster(g,v.publicKey(),v.privateKey());v.groups.add(g);return g;
+    /** What joining leaves behind: both sides hold the other's backup key and a pool of one-time keys. */
+    private static void member(Vault v,Protocol.Group g,Demo m,String name)throws Exception{
+        long now=System.currentTimeMillis();
+        v.pools.setTheirBackup(m.fp,m.id.publicKey,m.pools.backup(m.id,ENTROPY,now));v.pools.addTheirs(m.fp,m.id.publicKey,m.pools.issue(m.id,ENTROPY,v.identity.fingerprint(),KeyPools.POOL,now));
+        m.pools.setTheirBackup(v.identity.fingerprint(),v.identity.publicKey,v.pools.backup(v.identity,ENTROPY,now));m.pools.addTheirs(v.identity.fingerprint(),v.identity.publicKey,v.pools.issue(v.identity,ENTROPY,m.fp,KeyPools.POOL,now));
+        g.members.put(m.fp,Protocol.b64(m.id.publicKey.encode()));g.memberNames.put(m.fp,name);g.memberStatus.put(m.fp,"Joined");JoinProtocol.signRoster(g,v.identity,v.pools,ENTROPY,Collections.emptyMap());
     }
-    private static void member(Vault v,Protocol.Group g,KeyPair k,String name)throws Exception{
-        String id=Protocol.fingerprint(k.getPublic());g.members.put(id,Protocol.b64(k.getPublic().getEncoded()));g.memberNames.put(id,name);g.memberStatus.put(id,"Joined");PairingProtocol.signRoster(g,v.publicKey(),v.privateKey());
-    }
-    /** A real file-v3 package: from a demo member to this device, or from this device (from==null) to a member. */
-    private static void file(Vault v,File dir,Protocol.Group g,KeyPair from,String to,String name,String mime,byte[] body,boolean outgoing,long created)throws Exception{
-        File out=new File(dir,UUID.randomUUID()+".enigma");
-        try(OutputStream o=new FileOutputStream(out)){FileProtocol.encrypt(g,to,new ByteArrayInputStream(body),o,name,mime,from==null?v.publicKey():from.getPublic(),from==null?v.privateKey():from.getPrivate(),0);}
-        try(FileProtocol.Verified ver=FileProtocol.inspect(g,out,v.publicKey(),v.privateKey())){v.history.add(new MessageRecord(ver.messageId,g.id,ver.sender,ver.recipient,"file",out.getName(),ver.name,created,0,outgoing));}
+    /** A real ENG4 package between this device and a demo member, opened and stored as the app does. */
+    private static void file(Context context,Vault v,Protocol.Group g,Demo m,String name,String mime,byte[] body,boolean outgoing,long created)throws Exception{
+        Identity from=outgoing?v.identity:m.id;KeyPools fromPools=outgoing?v.pools:m.pools;Identity.Public to=outgoing?m.id.publicKey:v.identity.publicKey;String toId=to.fingerprint();
+        byte[] packet=SealedProtocol.seal(g,from,fromPools.backup(from,ENTROPY,created),Collections.singletonList(new SealedProtocol.Recipient(to,fromPools.theirBackup(toId),fromPools.take(toId),null)),new SealedProtocol.Content(name,mime,body,0,false),new byte[0],ENTROPY);
+        String id=SealedProtocol.idOf(packet),plain=UUID.randomUUID()+".plain",packetName="";
+        if(outgoing){File packages=new File(context.getFilesDir(),"packages");assertTrue(packages.isDirectory()||packages.mkdirs());packetName=id+".enigma";Files.write(new File(packages,packetName).toPath(),packet);}
+        else{SealedProtocol.Opened o=SealedProtocol.open(g,v.identity,v.pools,packet);SealedProtocol.accept(g,v.pools,o);assertArrayEquals(body,o.body);}
+        File history=new File(context.getFilesDir(),"history");assertTrue(history.isDirectory()||history.mkdirs());byte[] key=v.historyKey(plain),nonce=Protocol.random(12);
+        ByteArrayOutputStream stored=new ByteArrayOutputStream();stored.write(nonce);stored.write(Protocol.aes(javax.crypto.Cipher.ENCRYPT_MODE,key,nonce,plain.getBytes(StandardCharsets.UTF_8),body));Files.write(new File(history,plain).toPath(),stored.toByteArray());
+        v.history.add(new MessageRecord(outgoing?id+"/"+toId:id,g.id,from.fingerprint(),toId,"file",plain,name,mime,packetName,created,0,outgoing,false));
     }
     /** A drawn stand-in for a holiday photo. */
     private static byte[] photo(){
@@ -111,6 +123,10 @@ public final class ScreenshotTest {
     private static EditText editor(View view){
         if(view instanceof EditText)return (EditText)view;
         if(view instanceof ViewGroup){ViewGroup g=(ViewGroup)view;for(int i=0;i<g.getChildCount();i++){EditText f=editor(g.getChildAt(i));if(f!=null)return f;}}return null;
+    }
+    private static TextView findPrefix(View view,String prefix){
+        if(view instanceof TextView&&((TextView)view).getText().toString().startsWith(prefix))return (TextView)view;
+        if(view instanceof ViewGroup){ViewGroup g=(ViewGroup)view;for(int i=0;i<g.getChildCount();i++){TextView f=findPrefix(g.getChildAt(i),prefix);if(f!=null)return f;}}return null;
     }
     private static void spinners(View view,List<Spinner> found){if(view instanceof Spinner)found.add((Spinner)view);if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)spinners(((ViewGroup)view).getChildAt(i),found);}
     private static void waitFor(ActivityScenario<MainActivity> s,String text)throws Exception{

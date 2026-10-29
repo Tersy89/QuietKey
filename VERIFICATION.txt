@@ -1,3 +1,37 @@
+Enigma 0.7.0 app switch-over - 29 October 2026 (branch feature/0.7.0-messages)
+
+The app now uses Entropy (camera + motion sensors), Identity/KeyPools in the vault (format 2),
+JoinProtocol for joining and SealedProtocol for Send/Receive. Changes:
+- multiple recipients and view once;
+- history stored encrypted under the vault key;
+- a 0.6.0 vault is kept until an explicit Start fresh;
+- RSA protocol classes and their tests are removed (FileProtocol, DirectProtocol,
+  PairingProtocol, GroupKey; ProtocolTest, DirectProtocolTest, FileProtocolTest,
+  PairingProtocolTest, ReceiveRoutingTest, SecurityReviewTest, KeystoreTest, KeystoreFileTest);
+- EnigmaUiTest is removed (stale since 0.5.0; never ran on 0.6.0 screens);
+- JoiningFlowTest, LocalJoinTest, JoinBootstrapTest, InboxTest, PasswordVaultTest and
+  ScreenshotTest are ported to 0.7.0.
+Version 0.7.0 (versionCode 11).
+
+Executed on this PC (Windows, JDK 17.0.20.1, Gradle 8.9, AGP 8.7.3, SDK 35):
+- gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest lintDebug: success.
+- 62 JVM unit tests, 0 failures.
+- Lint: 0 errors, 32 warnings.
+- Disposable emulator EnigmaShots (API 35, wiped data): ScreenshotTest passed (1 test, 21 s).
+  It seeded genuine ENG4 packages, then unlocked and rendered the messages, chat, photo, message,
+  send (recipient checkboxes, view once), receive, groups and join screens. docs/screenshots was
+  refreshed from that run.
+
+Not run:
+- PasswordVaultTest on the emulator;
+- any two-device joining or messaging;
+- the 0.6.0 to 0.7.0 upgrade screen;
+- physical phones.
+No Enigma.apk was produced; that happens when the branch is merged on the owner's request.
+These are tests, not a security audit.
+
+----------------------------------------------------------------------------------------------
+
 Enigma 0.7.0 joining protocol — 29 October 2026 (branch feature/0.7.0-messages; not in the app yet)
 
 Added JoinProtocol (QKJ3/QKG3/QKA3 and v3 rosters with introductions). KeyPools now holds

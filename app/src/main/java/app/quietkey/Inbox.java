@@ -5,7 +5,7 @@ import java.util.*;
 /**
  * Message list logic with no Android dependency: groups encrypted history into chats (one group +
  * one other member) and decides what Enigma may preview in-app. Typed messages travel as a small
- * .enigma file named {@link #TEXT_NAME}; the plain text packet (QKD) remains the alternative.
+ * .enigma package named {@link #TEXT_NAME}; Send as text carries the same package as pasteable text.
  */
 public final class Inbox {
     public static final String TEXT_NAME="message.txt",TEXT_MIME="text/plain";
@@ -31,7 +31,7 @@ public final class Inbox {
     }
     private static List<MessageRecord> sorted(List<MessageRecord> history){List<MessageRecord> out=new ArrayList<>(history);out.sort(Comparator.comparingLong(r->r.createdAt));return out;}
     public static boolean typed(String name,String mime){return TEXT_NAME.equals(name)&&TEXT_MIME.equals(mime);}
-    public static String label(MessageRecord r){return r.kind.equals("text")?"Message (sent as text)":TEXT_NAME.equals(r.name)?"Message":r.name;}
+    public static String label(MessageRecord r){String base=TEXT_NAME.equals(r.name)&&TEXT_MIME.equals(r.mime)?"Message":r.name;return r.kind.equals("once")?base+" (view once)":base;}
     /** Only bounded images and text are opened in-app; everything else is offered as Save to device. */
     public static int preview(String mime,String name,long size){
         String m=mime==null?"":mime.toLowerCase(Locale.ROOT),n=name==null?"":name.toLowerCase(Locale.ROOT);

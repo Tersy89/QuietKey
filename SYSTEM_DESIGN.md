@@ -1,6 +1,8 @@
 # Enigma system design
 
-Version: 0.6.0 development build. Updated: 29 October 2026 (0.7.0 message-security proposal added; not implemented).
+Version: 0.7.0 development build (branch feature/0.7.0-messages). Updated: 29 October 2026.
+
+> **0.7.0 status:** the app now uses the design in "0.7.0 message security" below. Sections that still describe RSA identities, QKD3/file-v3 packets, QKJ1/QKG2/QKA1 joining or ciphertext-only history describe 0.6.0. Where they conflict, the 0.7.0 section is authoritative. Rewriting those sections in full is still to do before merging to main.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
@@ -168,35 +170,41 @@ Reset requires fresh passphrase authentication and exact typed RESET. Android cl
 
 No forward secrecy, ratchet, post-compromise recovery, owner transfer, key export, network directory synchronization or independent audit is provided. A trusted/malicious/compromised owner can introduce deceptive names/new devices; established fingerprints must remain visible. The app cannot prevent recipients forwarding plaintext or an external messenger being sent to the wrong contact. Screenshots are blocked, but external cameras, keyboards and compromised OS/app execution remain risks.
 
-## Proposed 0.7.0 message security (planned, not implemented)
+## 0.7.0 message security
 
-Everything in this section is a proposal agreed in discussion with the owner on 29 October 2026. None of it exists in the current build, and the rest of this document still describes 0.6.0. It will move into the implemented sections only with the code and executed tests.
+Agreed with the owner on 29 October 2026 and implemented on branch feature/0.7.0-messages. Items still listed under "Not yet done" are not implemented.
 
-**Implementation status (branch feature/0.7.0-messages, 29 October 2026):** pure-Java protocol layer, not yet used by the app:
+**Implementation status (branch feature/0.7.0-messages, 29 October 2026):**
 
-- `Entropy`: OS randomness plus camera and motion-sensor mixing.
-- `Identity`: Ed25519 signing and X25519 agreement keys.
-- `PreKey`: signed backup and one-time keys.
-- `KeyPools`: per-contact pools, owner reserve held for later members, 30-day backup rotation, and vault encoding.
-- `SealedProtocol`: the ENG4 package, X3DH, multiple recipients, signed inner header, and refill/backup carriage.
-- `JoinProtocol`, with the same flow and transports as 0.6.0:
-  - **QKJ3 request**: identity, signed backup key and 20 reserve keys.
-  - **QKG3 invitation**: X25519 (ephemeral + owner identity) to the joiner, owner-signed, carrying the group secret, roster and the owner's 100 one-time keys.
-  - **QKA3 receipt**: the joiner's 100 one-time keys for the owner.
-  - **v3 roster**: every member's backup key, plus introductions in the revision that admits someone. Each existing member gets one of the newcomer's reserve keys, and the newcomer gets one of each existing member's. Every message carries the roster.
+The app uses the following:
+- `Entropy`, fed by camera digests at setup and group creation and by accelerometer and gyroscope events while unlocked.
+- `Identity` and `KeyPools`, stored in the passphrase vault (decision 7: vault only; vault format version 2).
+- `JoinProtocol` (QKJ3/QKG3/QKA3) for nearby and manual joining. LocalJoinWire limits are raised for the key pools.
+- `SealedProtocol` (ENG4) for Send and Receive:
+  - Several recipients can be ticked.
+  - View once is available.
+  - Send as text carries the same package as `ENG4:` base64.
+  - A newer roster carried in a message is adopted on receipt.
 
-These are covered by `SealedProtocolTest` (16) and `JoinProtocolTest` (9). The tests confirm that later members' first messages to each other have full protection.
+History:
+- Readable content is stored once opened, under files/history. Each file is AES-GCM encrypted under a key that HKDF derives from the vault master key and the file name.
+- Outgoing packages are kept under files/packages for Share again.
+- View-once content is never stored.
 
-Design adjustment: old backup private keys are kept for 365 days (not 30). A roster can hand out a member's backup key long after it was replaced, and deleting it sooner would make first messages from new members unreadable. This affects only "reduced protection" messages; one-time-key messages still lose their key after one use.
+Upgrading from 0.6.0:
+- A version-1 (0.6.0) vault is detected and kept unchanged; history clean-up is skipped for it.
+- The app shows "New keys needed", and only an explicit, passphrase-confirmed Start fresh replaces it.
+
+Removed: RSA identities and Keystore identity alias use, FileProtocol, DirectProtocol, PairingProtocol, GroupKey and legacy QKM1.
+
+Design adjustment: old backup private keys are kept for 365 days, because a roster can hand out a member's backup key long after it was replaced. This affects only reduced-protection messages.
 
 Not yet done:
-- the app switch-over (vault fields, JoiningFlow/LocalJoinWire limits, removing RSA formats);
 - reserve replenishment;
-- group updates, second admin and rekey on removal;
-- sensor collection;
-- the Send/Receive UI and history-in-vault;
-- chunked streaming for large files;
-- Keystore storage, which conflicts with camera-mixed keys and is raised with the owner.
+- an explicit Send group update button, a second admin and rekey on removal (decisions 1-3);
+- chunked streaming for files (ENG4 holds content in memory, up to 50 MiB);
+- full rewrite of the 0.6.0 sections of this document;
+- physical-phone tests.
 
 ### Goals
 
@@ -312,6 +320,7 @@ Planned work: per-message forward secrecy, separate signing/agreement identities
 
 ## Change log
 
+- 0.7.0 / 29 October 2026 (branch): Ed25519/X25519 identities in the vault, camera and motion entropy, X3DH one-time keys with per-contact pools and owner introductions, multiple recipients, view once, readable history stored encrypted in the vault, 0.6.0 vault upgrade screen; RSA formats removed.
 - Proposal / 29 October 2026: 0.7.0 message-security design recorded for owner sign-off (X25519/Ed25519, X3DH-style one-time keys with per-contact pools and owner reserve, multiple recipients, plaintext history in the vault, explicit owner group updates). Not implemented; the build remains 0.6.0.
 - 0.6.0 / 28 October 2026: NFC joining fix (recipient reader mode re-armed after the QR scanner or any pause; owner polling disabled on Android 15+ while serving) after "Empty tag" was seen in phone testing; joining menus rebuilt as buttons whose names match the on-screen instructions; messenger-style Messages tab with conversations, Send (message or file → group → person) and Receive; typed messages sent as .enigma files by default with text packets as the alternative; received photos/text open in an in-memory viewer with Save to device as a separate step; Enigma accepts .enigma files and text opened or shared from other apps; Home tab removed.
 

@@ -23,8 +23,8 @@ import static app.quietkey.Packets.*;
 public final class JoinProtocol {
     private JoinProtocol(){}
     public static final String REQUEST="QKJ3:",INVITATION="QKG3:",RECEIPT="QKA3:";
-    public static final int MAX_REQUEST=6000,MAX_INVITATION=60000,MAX_RECEIPT=20000,MAX_ROSTER=40000,MAX_MEMBERS=PairingProtocol.MAX_MEMBERS;
-    public static final long WINDOW=PairingProtocol.WINDOW;
+    public static final int MAX_REQUEST=6000,MAX_INVITATION=60000,MAX_RECEIPT=20000,MAX_ROSTER=40000,MAX_MEMBERS=30;
+    public static final long WINDOW=300000;
 
     public static final class Request {
         public final Identity.Public key;public final String name,id;public final long created,expires;public final PreKey backup;public final List<PreKey> reserve;

@@ -95,8 +95,15 @@ public final class SealedProtocol {
         }finally{Arrays.fill(contentKey,(byte)0);}
     }
 
+    /** Send as text: the same package as pasteable base64 behind this prefix. */
+    public static final String TEXT_PREFIX="ENG4:";
+    public static String toText(byte[] packet){return TEXT_PREFIX+Protocol.b64(packet);}
+    public static byte[] fromText(String text){String wire=Packets.clean(text);if(!wire.startsWith(TEXT_PREFIX))throw new SecurityException("That is not an Enigma message.");return Protocol.un64(wire.substring(TEXT_PREFIX.length()));}
     /** The group a package belongs to, for routing before any key is touched. */
-    public static String groupOf(byte[] packet)throws IOException{DataInputStream in=Packets.input(Packets.blob(Packets.input(packet),64*1024));if(!MAGIC.equals(in.readUTF()))throw new IOException("Not an Enigma message");return in.readUTF();}
+    public static String groupOf(byte[] packet)throws IOException{return outer(packet)[0];}
+    /** The package's message ID, readable before decryption (to find an already-opened copy). */
+    public static String idOf(byte[] packet)throws IOException{return outer(packet)[1];}
+    private static String[] outer(byte[] packet)throws IOException{DataInputStream in=Packets.input(Packets.blob(Packets.input(packet),64*1024));if(!MAGIC.equals(in.readUTF()))throw new IOException("Not an Enigma message");return new String[]{in.readUTF(),in.readUTF()};}
 
     // ---- receiving ----
     /**

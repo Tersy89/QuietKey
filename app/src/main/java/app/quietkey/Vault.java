@@ -12,15 +12,25 @@ import java.util.*;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 
-/** At-rest vault encrypted with a non-exportable Android Keystore AES key. */
+/**
+ * At-rest vault: JSON encrypted under the passphrase-derived master key (whose envelope is also
+ * wrapped by a non-exportable Keystore AES key). Since 0.7.0 it holds the Ed25519/X25519 identity
+ * and key pools (decision 7: vault only, so camera/motion randomness is mixed into every key).
+ * A 0.6.0 vault (version 1, RSA) is kept untouched as {@link #legacy} until the owner chooses
+ * Start fresh; it is never silently erased.
+ */
 public final class Vault implements AutoCloseable {
-    private static final String ID = "quietkey.identity.v1", STORAGE = "quietkey.vault.v1";
+    private static final String STORAGE = "quietkey.vault.v1";
     private final AtomicFile file;
     private final KeyStore ks;
     private byte[] master;
     private boolean closed;
     public final ArrayList<Protocol.Group> groups = new ArrayList<>();
     public final ArrayList<MessageRecord> history=new ArrayList<>();
+    public Identity identity;
+    public KeyPools pools=new KeyPools();
+    public boolean legacy;
+    private JSONObject legacyRoot;
     public String deviceName="This device", personalGroupId;
     public boolean setupCompleted;
     public long setupCapturedAt;
@@ -37,15 +47,7 @@ public final class Vault implements AutoCloseable {
         file = new AtomicFile(new File(context.getFilesDir(), "groups.qkv"));
         ks = KeyStore.getInstance("AndroidKeyStore"); ks.load(null);
         boolean stored = file.getBaseFile().exists() || new File(file.getBaseFile()+".bak").exists();
-        if (stored && (!ks.containsAlias(ID) || !ks.containsAlias(STORAGE))) throw new SecurityException("Vault keys unavailable. Recovery requires pairing again on a new installation");
-        if (!ks.containsAlias(ID)) {
-            KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA", "AndroidKeyStore");
-            generator.initialize(new KeyGenParameterSpec.Builder(ID, KeyProperties.PURPOSE_DECRYPT | KeyProperties.PURPOSE_SIGN)
-                .setKeySize(2048).setDigests(KeyProperties.DIGEST_SHA256)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
-                .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1).build());
-            generator.generateKeyPair();
-        }
+        if (stored && !ks.containsAlias(STORAGE)) throw new SecurityException("Vault keys unavailable. Recovery requires pairing again on a new installation");
         if (!ks.containsAlias(STORAGE)) {
             KeyGenerator generator = KeyGenerator.getInstance("AES", "AndroidKeyStore");
             generator.init(new KeyGenParameterSpec.Builder(STORAGE, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
@@ -55,10 +57,12 @@ public final class Vault implements AutoCloseable {
         if (stored) {load();if(master!=null && file.readFully()[0]==1)save();}
     }
     private void live(){if(closed)throw new IllegalStateException("Vault is locked");}
-    public PublicKey publicKey() throws Exception { live();return ks.getCertificate(ID).getPublicKey(); }
-    public PrivateKey privateKey() throws Exception { live();return (PrivateKey) ks.getKey(ID, null); }
+    /** Key for one history file: readable content is only ever stored encrypted under the master key. */
+    public synchronized byte[] historyKey(String file) throws Exception { live(); if(master==null)throw new IllegalStateException("Set an app password first"); return Protocol.hkdf(master,file.getBytes(StandardCharsets.UTF_8),"Enigma/history-file/v1".getBytes(StandardCharsets.UTF_8)); }
+    /** 0.6.0 → 0.7.0: after explicit confirmation, replace the RSA-era groups and history with a fresh start. */
+    public synchronized void startFresh() { live(); legacy=false; legacyRoot=null; for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0); groups.clear(); history.clear(); joiningRequest=""; pendingInvites.clear(); invitationCache.clear(); personalGroupId=null; setupCompleted=false; setupCapturedAt=0; if(identity!=null)identity.destroy(); identity=null; pools.destroy(); pools=new KeyPools(); }
     public synchronized byte[] copyMaster(){live();if(master==null)throw new IllegalStateException("Set an app password first");return master.clone();}
-    @Override public synchronized void close(){closed=true;if(master!=null)Arrays.fill(master,(byte)0);master=null;for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0);groups.clear();history.clear();joiningRequest="";pendingInvites.clear();invitationCache.clear();pairingUsed.clear();}
+    @Override public synchronized void close(){closed=true;if(master!=null)Arrays.fill(master,(byte)0);master=null;for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0);groups.clear();history.clear();joiningRequest="";pendingInvites.clear();invitationCache.clear();pairingUsed.clear();if(identity!=null)identity.destroy();identity=null;pools.destroy();legacyRoot=null;}
     private SecretKey storageKey() throws Exception { return (SecretKey) ks.getKey(STORAGE, null); }
     private void load() throws Exception {
         byte[] bytes = file.readFully();
@@ -70,8 +74,11 @@ public final class Vault implements AutoCloseable {
         byte[] clear = cipher.doFinal(Arrays.copyOfRange(bytes, 13, bytes.length));
         JSONObject root;
         try { root = new JSONObject(new String(clear, StandardCharsets.UTF_8)); } finally { Arrays.fill(clear, (byte)0); }
-        if (root.getInt("version") != 1) throw new SecurityException("Unsupported vault version");
+        int version=root.getInt("version");if (version != 1 && version != 2) throw new SecurityException("Unsupported vault version");
         deviceName=root.optString("deviceName","This device");
+        if(version==1){legacy=true;legacyRoot=root;return;}
+        if(root.has("identity")){byte[] id=Protocol.un64(root.getString("identity"));try{identity=Identity.restore(id);}finally{Arrays.fill(id,(byte)0);}}
+        if(root.has("keyPools"))pools=KeyPools.decode(Protocol.un64(root.getString("keyPools")));
         setupCompleted=root.optBoolean("setupCompleted",false);
         personalGroupId=root.optString("personalGroupId",null);
         setupCapturedAt=root.optLong("setupCapturedAt",0);
@@ -89,7 +96,7 @@ public final class Vault implements AutoCloseable {
             if (!ids.add(g.id)) throw new SecurityException("Duplicate group");
             JSONObject members = item.getJSONObject("members"); Iterator<String> keys = members.keys();
             while (keys.hasNext()) { String key = keys.next(); String encoded = members.getString(key);
-                if (!Protocol.fingerprint(Protocol.publicKey(encoded)).equals(key)) throw new SecurityException("Invalid membership"); g.members.put(key, encoded); }
+                if (!Identity.Public.decode(Protocol.un64(encoded)).fingerprint().equals(key)) throw new SecurityException("Invalid membership"); g.members.put(key, encoded); }
             if (!g.members.containsKey(g.owner)) throw new SecurityException("Missing group owner");
             g.rosterRevision=item.optLong("rosterRevision",0);g.roster=item.optString("roster","");
             JSONArray blocked=item.optJSONArray("blocked");if(blocked!=null)for(int j=0;j<blocked.length();j++)g.blocked.add(blocked.getString(j));
@@ -108,6 +115,7 @@ public final class Vault implements AutoCloseable {
     public synchronized void save() throws Exception {
         live();
         if (groups.size()>30) throw new IllegalArgumentException("Maximum 30 groups");
+        if(legacy){write(legacyRoot);return;}
         JSONArray list = new JSONArray();
         for (Protocol.Group g : groups) {
             JSONObject item = new JSONObject(); item.put("id",g.id); item.put("name",g.name); item.put("seed",Protocol.b64(g.seed)); item.put("expires",g.expires); item.put("owner",g.owner);
@@ -117,13 +125,18 @@ public final class Vault implements AutoCloseable {
             item.put("memberNames",names);
             item.put("rosterRevision",g.rosterRevision);item.put("roster",g.roster);item.put("blocked",new JSONArray(new ArrayList<>(g.blocked)));item.put("memberStatus",new JSONObject(g.memberStatus));
         }
-        JSONObject root = new JSONObject(); root.put("version",1); root.put("groups",list);
+        JSONObject root = new JSONObject(); root.put("version",2); root.put("groups",list);
+        if(identity!=null){byte[] id=identity.encodePrivate();try{root.put("identity",Protocol.b64(id));}finally{Arrays.fill(id,(byte)0);}}
+        root.put("keyPools",Protocol.b64(pools.encode()));
         root.put("deviceName",deviceName); root.put("setupCompleted",setupCompleted);
         root.put("personalGroupId",personalGroupId); root.put("setupCapturedAt",setupCapturedAt);
         if(invitationCache.size()>JoiningFlow.MAX_PENDING)throw new SecurityException("Too many saved invitations");
         JSONObject invitations=new JSONObject();for(Map.Entry<String,JoiningFlow.Invitation> entry:invitationCache.entrySet()){JoiningFlow.Invitation item=entry.getValue();JSONObject value=new JSONObject();value.put("request",item.request);value.put("group",item.group);value.put("member",item.member);value.put("packet",item.packet);value.put("expires",item.expires);value.put("revision",item.revision);invitations.put(entry.getKey(),value);}root.put("invitationCache",invitations);
         root.put("joiningRequest",joiningRequest);root.put("pairingUsed",new JSONArray(new ArrayList<>(pairingUsed)));root.put("pendingInvites",new JSONObject(pendingInvites));
         JSONArray messages=new JSONArray();for(MessageRecord message:history)messages.put(message.json());root.put("history",messages);
+        write(root);
+    }
+    private void write(JSONObject root) throws Exception {
         byte[] clear = root.toString().getBytes(StandardCharsets.UTF_8);
         if(clear.length + 29 > 24000000) { Arrays.fill(clear,(byte)0); throw new SecurityException("Vault capacity reached. Create a fresh installation or delete old groups after preserving access on another device."); }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE,master==null?storageKey():new javax.crypto.spec.SecretKeySpec(master,"AES"));
