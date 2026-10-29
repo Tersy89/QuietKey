@@ -1,6 +1,6 @@
 # Enigma system design
 
-Version: 0.6.0 development build. Updated: 28 October 2026.
+Version: 0.6.0 development build. Updated: 29 October 2026 (0.7.0 message-security proposal added; not implemented).
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
@@ -168,14 +168,124 @@ Reset requires fresh passphrase authentication and exact typed RESET. Android cl
 
 No forward secrecy, ratchet, post-compromise recovery, owner transfer, key export, network directory synchronization or independent audit is provided. A trusted/malicious/compromised owner can introduce deceptive names/new devices; established fingerprints must remain visible. The app cannot prevent recipients forwarding plaintext or an external messenger being sent to the wrong contact. Screenshots are blocked, but external cameras, keyboards and compromised OS/app execution remain risks.
 
+## Proposed 0.7.0 message security (planned, not implemented)
+
+Everything in this section is a proposal agreed in discussion with the owner on 29 October 2026. None of it exists in the current build, and the rest of this document still describes 0.6.0. It will move into the implemented sections only with the code and executed tests.
+
+### Goals
+
+Designs that must be kept and enforced:
+
+- Key generation uses OS randomness with live camera input mixed in.
+- Only members of the group can decrypt a group's messages.
+- Every message is signed by its sender.
+- Only the selected recipient(s) can read a message.
+- Identity keys are exchanged only in person (nearby QR/NFC or manual file), never via a server or key directory.
+
+New in 0.7.0:
+
+- **Multiple recipients**: one message to several selected members of a group.
+- **Per-message forward secrecy**: each message uses a one-time key whose private half is deleted after use, so a later key theft cannot decrypt captured messages. There is no time limit or fixed key count; pools refill as people message each other.
+
+Non-goal: compatibility with OpenPGP or GnuPG.
+
+### What is borrowed and from where
+
+- From OpenPGP v6 (RFC 9580):
+  - Its modern algorithm set: X25519 (key agreement), Ed25519 (signatures), AES-256-GCM and HKDF-SHA-256, via Bouncy Castle, which the app already includes. This replaces RSA-2048.
+  - Separate long-lived identity (signing) keys from encryption keys.
+  - Signed revocation.
+- A fix for a known OpenPGP weakness (surreptitious forwarding): the sender's signature covers the group ID, roster revision, sender, the full recipient list, key IDs and a content hash, and sits inside the encryption. A recipient therefore cannot re-encrypt a signed message to someone else and have it accepted as addressed to them.
+- From Signal's published X3DH key agreement with one-time prekeys: the way identity, backup and one-time keys combine into a message key. Implement it as specified; Enigma's additions (group secret, signed one-time keys, owner reserve, multiple recipients) are kept small and listed here.
+- Not adopted: the OpenPGP packet format, keyservers, web of trust and interoperability.
+
+### Keys per member
+
+- **Identity key**: Ed25519, long-lived, exchanged in person when joining. Signs everything else.
+- **Identity agreement key**: X25519, long-lived, signed by the identity key (X3DH's IK).
+- **Backup key**: X25519, medium-term, signed (X3DH's signed prekey). Used when no one-time key is available, and for the first message to a contact before their pool arrives. It is replaced periodically by sending a new signed one in messages. The old private half is kept only for a grace period.
+- **One-time keys**: X25519, numbered and signed by the identity key, because they travel through untrusted messengers. Each member keeps a separate pool *per contact* (default 100), so two senders never use the same key. Each key is used for exactly one message; its private half is deleted after that message is authenticated and decrypted.
+- **Owner reserve**: on joining, each member also gives the owner a signed batch of public one-time keys "for future members". The owner allocates each reserve key to exactly one later joiner. The reserve is public keys only, so the owner cannot read anything with it.
+- **Group secret**: unchanged (32 bytes per group). It is mixed into every message key, so a valid one-time key without group membership cannot decrypt.
+- **Randomness**: an HMAC-DRBG seeded by HKDF from OS randomness plus the live camera digest. It is reseeded with OS randomness for every generation and with camera input whenever the camera is used, so refills need no new photo. As today, OS randomness is the security foundation; camera input is not a measured entropy guarantee.
+
+### Sending
+
+1. Choose a message or file, a group, then one or more recipients.
+2. The content is encrypted once with a random 32-byte content key (AES-256-GCM, chunked like file-v3).
+3. For each recipient:
+   - take an unused one-time key from that recipient's pool for this sender (or their backup key, see below);
+   - make a fresh ephemeral X25519 key;
+   - run X3DH;
+   - derive a wrapping key with HKDF using the group secret as salt;
+   - wrap the content key.
+4. The outer header carries only opaque key IDs and ephemeral public keys, not member fingerprints. Each recipient finds its entry by its own key IDs.
+5. Inside the encryption:
+   - the signed inner header;
+   - the existing owner-signed roster carrier;
+   - for each recipient, fresh signed one-time public keys from the sender's pool for them (the refill);
+   - the sender's current backup key if it changed.
+6. Ephemeral private keys are deleted immediately. The sender's plaintext copy is kept in the vault (see History).
+
+**Empty pool (assumed default, to confirm):** send using the recipient's backup key. Both sides show "reduced protection" on that message until a refill arrives. The recipient can also send a stand-alone signed refill file.
+
+### Receiving
+
+1. Find the entry addressed to this device's key IDs.
+2. Recompute the wrapping key and unwrap.
+3. Decrypt the content and verify the sender's signature over the inner header.
+4. Check that this device is in the signed recipient list and that the group and roster revision match.
+5. Only after full verification: delete the one-time private key, store the plaintext in the vault, verify and store the refill keys, and adopt any newer owner-signed roster.
+
+A replay of a one-time-key message fails because the key is gone. Backup-key messages use the existing replay log. One-time keys are independent, so messages can arrive in any order.
+
+### History and viewing (agreed)
+
+- After the first successful decryption, the plaintext is kept inside the passphrase-protected vault (AES-GCM under the master key), and the `.enigma` package is no longer needed.
+- The sender can mark a message "view once". It is then shown and not stored. This cannot stop someone photographing the screen with another device.
+- The existing history size cap applies.
+
+### Group membership
+
+- **Already implemented in 0.6.0**: every message and file carries the owner-signed roster with its revision. Receivers adopt a higher revision after the packet is authenticated. So when C joins after B, B learns about C as soon as any packet carrying the newer roster reaches B (from A or C), and can then message C.
+- **New: Send group update.** The owner can share the latest signed roster as a file to all members at once. Members accept only the owner's signature and a higher revision. Removing a member is a new revision without them; members then discard keys for that member.
+- **New: first-message protection between later members.** When C joins, the owner passes C a slice of each existing member's reserve keys, and C's keys for each existing member travel in the signed roster update. B and C can then message each other with full protection from the first message.
+- Only the owner admits and removes members (unchanged).
+
+### Format change
+
+0.7.0 removes the RSA formats (QKD3, file-v3 and RSA identities). Every member generates new keys and rejoins in person. Older-format compatibility is not a requirement for this prototype.
+
+### Limits that remain
+
+- The design and code are not independently audited. Enigma's own additions need particular test coverage.
+- Forward secrecy depends on deleting keys. Flash storage and Java memory cannot guarantee erasure.
+- No post-compromise recovery: a thief who unlocks the device can impersonate its owner until that identity is revoked and the member rejoins.
+- Backup-key messages have weaker forward secrecy until that backup key is replaced.
+- Stored plaintext history is exactly as safe as the vault passphrase.
+- The external messenger still sees who sends files to whom, when, and how large they are.
+
+### Open questions
+
+1. Owner loss: accept rebuilding the group, a second admin, or a two-member quorum?
+2. On removal, should the group secret also be replaced (sent inside the signed update)?
+3. How does a member announce their own identity is compromised, through the owner's update, and then rejoin?
+4. Do recipients of a multi-recipient message see the other recipients? The proposed default is yes; the list is signed.
+5. Camera reseeding: only when the camera is used, or also a periodic prompt?
+6. Confirm that all members rejoining for 0.7.0 is acceptable.
+7. Key storage: the Android Keystore supports Ed25519/X25519 only on newer Android versions. Should identity keys live in the Keystore where available, or always in the vault for one consistent design?
+8. Defaults: pool size per contact, owner reserve size, refill count per message, and backup-key lifetime.
+9. Confirm the empty-pool default (send with "reduced protection" rather than refuse).
+
 ## Verification and future work
 
 Executed build/test evidence is recorded in VERIFICATION.txt, not inferred from this design. Required checks include wrong recipient/session, invitation/signature/GCM tampering, frame corruption/mixing, directory rollback/conflicts, automatic member introduction, C compromise, missing group secret, password cryptographic failures, locked-session cancellation, Keystore behavior and system-picker file restoration. Physical-phone pairing and vendor biometric behavior must be tested separately.
 
-Planned work: reviewed ratcheting/forward secrecy; separate signing/decryption identities with explicit transition; authenticated group rekeying; dedicated personal file vault if requested; recovery design if requested; accessibility/device-size coverage; independent security audit. These are not claims about the current build.
+Planned work: per-message forward secrecy, separate signing/agreement identities and multiple recipients as in the 0.7.0 proposal above; authenticated group rekeying; dedicated personal file vault if requested; recovery design if requested; accessibility/device-size coverage; independent security audit. These are not claims about the current build.
 
 ## Change log
 
+- Proposal / 29 October 2026: 0.7.0 message-security design recorded for owner sign-off (X25519/Ed25519, X3DH-style one-time keys with per-contact pools and owner reserve, multiple recipients, plaintext history in the vault, explicit owner group updates). Not implemented; the build remains 0.6.0.
 - 0.6.0 / 28 October 2026: NFC joining fix (recipient reader mode re-armed after the QR scanner or any pause; owner polling disabled on Android 15+ while serving) after "Empty tag" was seen in phone testing; joining menus rebuilt as buttons whose names match the on-screen instructions; messenger-style Messages tab with conversations, Send (message or file → group → person) and Receive; typed messages sent as .enigma files by default with text packets as the alternative; received photos/text open in an in-memory viewer with Save to device as a separate step; Enigma accepts .enigma files and text opened or shared from other apps; Home tab removed.
 
 - 0.5.0 / 28 October 2026: received text/files open in the group named by the packet and tolerate messenger line-wrapping (fixes "message did not decrypt" when another group was selected); nearby joining by one QR code or NFC tap over an app-started local-only hotspot or same Wi-Fi with a one-time KEK, owner-fingerprint pinning and six-digit check codes; manual file transfer for USB cables/any copy with a check code; USB accessory, typed hotspot code and multi-frame QR joining removed; CameraX dependency removed.
