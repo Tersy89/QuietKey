@@ -172,23 +172,31 @@ No forward secrecy, ratchet, post-compromise recovery, owner transfer, key expor
 
 Everything in this section is a proposal agreed in discussion with the owner on 29 October 2026. None of it exists in the current build, and the rest of this document still describes 0.6.0. It will move into the implemented sections only with the code and executed tests.
 
-**Implementation status (branch feature/0.7.0-messages, 29 October 2026):** the pure-Java protocol layer exists but is not yet used by the app:
+**Implementation status (branch feature/0.7.0-messages, 29 October 2026):** pure-Java protocol layer, not yet used by the app:
 
 - `Entropy`: OS randomness plus camera and motion-sensor mixing.
 - `Identity`: Ed25519 signing and X25519 agreement keys.
 - `PreKey`: signed backup and one-time keys.
-- `KeyPools`: per-contact pools, owner reserve, 30-day backup rotation with grace, and vault encoding.
+- `KeyPools`: per-contact pools, owner reserve held for later members, 30-day backup rotation, and vault encoding.
 - `SealedProtocol`: the ENG4 package, X3DH, multiple recipients, signed inner header, and refill/backup carriage.
+- `JoinProtocol`, with the same flow and transports as 0.6.0:
+  - **QKJ3 request**: identity, signed backup key and 20 reserve keys.
+  - **QKG3 invitation**: X25519 (ephemeral + owner identity) to the joiner, owner-signed, carrying the group secret, roster and the owner's 100 one-time keys.
+  - **QKA3 receipt**: the joiner's 100 one-time keys for the owner.
+  - **v3 roster**: every member's backup key, plus introductions in the revision that admits someone. Each existing member gets one of the newcomer's reserve keys, and the newcomer gets one of each existing member's. Every message carries the roster.
 
-These are covered by `SealedProtocolTest` (16 JVM tests).
+These are covered by `SealedProtocolTest` (16) and `JoinProtocolTest` (9). The tests confirm that later members' first messages to each other have full protection.
+
+Design adjustment: old backup private keys are kept for 365 days (not 30). A roster can hand out a member's backup key long after it was replaced, and deleting it sooner would make first messages from new members unreadable. This affects only "reduced protection" messages; one-time-key messages still lose their key after one use.
 
 Not yet done:
-- vault and Keystore storage;
-- joining (identity exchange, initial pools, owner reserve forwarding);
+- the app switch-over (vault fields, JoiningFlow/LocalJoinWire limits, removing RSA formats);
+- reserve replenishment;
 - group updates, second admin and rekey on removal;
 - sensor collection;
 - the Send/Receive UI and history-in-vault;
-- chunked streaming for large files (ENG4 currently holds content in memory, up to 50 MiB).
+- chunked streaming for large files;
+- Keystore storage, which conflicts with camera-mixed keys and is raised with the owner.
 
 ### Goals
 

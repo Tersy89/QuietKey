@@ -33,7 +33,7 @@ Use disposable development data. To retain an installation, install over it and 
 
 ## JVM unit tests
 
-`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. On branch feature/0.7.0-messages, `SealedProtocolTest` covers the 0.7.0 protocol layer (one-time keys, multiple recipients, group binding, key pools and entropy mixing). That layer is not used by the app yet, so there are no phone checks for it yet.
+`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. On branch feature/0.7.0-messages, `SealedProtocolTest` and `JoinProtocolTest` cover the 0.7.0 protocol layer: one-time keys, multiple recipients, group binding, key pools, entropy mixing, joining and introductions between later members. That layer is not used by the app yet, so there are no phone checks for it yet.
 
 ## Automated Android checks
 

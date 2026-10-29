@@ -1,3 +1,28 @@
+Enigma 0.7.0 joining protocol — 29 October 2026 (branch feature/0.7.0-messages; not in the app yet)
+
+Added JoinProtocol (QKJ3/QKG3/QKA3 and v3 rosters with introductions). KeyPools now holds
+members' reserve keys for the owner. Old backup private keys are kept for 365 days.
+
+Executed: gradlew testDebugUnitTest — 114 JVM unit tests, 0 failures (105 before plus 9 in
+JoinProtocolTest).
+
+JoinProtocolTest covers:
+- owner and joiner have full protection both ways after joining;
+- a later member and an existing member meet through owner introductions, carried in a message,
+  with full protection from the first message;
+- re-applying the same roster does not reuse introductions;
+- an invitation opens only for its own request and device, and tampering fails;
+- only the owner invites and signs rosters;
+- forged requests and receipts are rejected;
+- older rosters are ignored and locally blocked members stay out;
+- group creation needs camera or motion input;
+- held reserve keys survive vault encoding.
+
+These are unit tests, not a security audit. Not run: assembleDebug, lint and device tests (no app
+code changed).
+
+----------------------------------------------------------------------------------------------
+
 Enigma 0.7.0 protocol layer — 29 October 2026 (branch feature/0.7.0-messages; not in the app yet)
 
 Added pure-Java Entropy, Identity, PreKey, KeyPools and SealedProtocol (ENG4) per the 0.7.0
