@@ -9,12 +9,15 @@ import java.util.*;
  * - own backup keys, replaced every 30 days; old private halves kept 365 days, because a roster
  *   can hand out a member's backup key long after it was replaced;
  * - contacts' signed public one-time keys and backup keys, used when sending to them.
+ * Every key is an X25519 + ML-KEM-768 pair (decision 11).
  * Pure Java; stored inside the passphrase vault.
  */
 public final class KeyPools {
     public static final int POOL=100,RESERVE=20,REFILL=10,MAX_THEIRS=2*POOL;
     public static final long DAY=24L*60*60*1000,BACKUP_LIFE=30*DAY,BACKUP_GRACE=365*DAY;
     static final String RESERVE_CONTACT="";
+    /** Own private halves: X25519 private key (32 bytes) followed by the ML-KEM-768 seed (64 bytes). */
+    static final int PRIVATE=32+PostQuantum.KEM_SEED;
 
     private static final class Owned {
         final PreKey key;final byte[] privateKey;final String contact;
@@ -94,15 +97,18 @@ public final class KeyPools {
     public void destroy(){for(Owned o:ownOneTime.values())Arrays.fill(o.privateKey,(byte)0);for(Owned o:ownBackups)Arrays.fill(o.privateKey,(byte)0);ownOneTime.clear();ownBackups.clear();theirOneTime.clear();theirBackup.clear();heldReserve.clear();}
 
     private static Owned create(Identity me,Entropy entropy,int kind,long now,String contact){
-        byte[] privateKey=entropy.next32(kind==PreKey.BACKUP?"backup-key":"one-time-key"),id=Arrays.copyOf(entropy.next32("key-id"),8);
-        return new Owned(PreKey.sign(me,kind,id,Identity.x25519Public(privateKey),now),privateKey,contact==null?RESERVE_CONTACT:contact);
+        String purpose=kind==PreKey.BACKUP?"backup-key":"one-time-key";
+        byte[] x=entropy.next32(purpose),kem=PostQuantum.kemSeed(entropy,purpose),id=Arrays.copyOf(entropy.next32("key-id"),8),privateKey=new byte[PRIVATE];
+        System.arraycopy(x,0,privateKey,0,32);System.arraycopy(kem,0,privateKey,32,PostQuantum.KEM_SEED);
+        try{return new Owned(PreKey.sign(me,kind,id,Identity.x25519Public(x),PostQuantum.kemPublic(kem),now),privateKey,contact==null?RESERVE_CONTACT:contact);}
+        finally{Arrays.fill(x,(byte)0);Arrays.fill(kem,(byte)0);}
     }
     private static void requireOwner(String contact,Identity.Public owner){if(!owner.fingerprint().equals(contact))throw new SecurityException("Key owner does not match contact");}
 
     // ---- vault storage ----
     public byte[] encode(){
         try{return Packets.pack(o->{
-            o.writeUTF("Enigma/key-pools/v1");
+            o.writeUTF("Enigma/key-pools/v2");
             o.writeInt(ownOneTime.size());for(Owned x:ownOneTime.values()){x.key.write(o);o.write(x.privateKey);o.writeUTF(x.contact);}
             o.writeInt(ownBackups.size());for(Owned x:ownBackups){x.key.write(o);o.write(x.privateKey);}
             o.writeInt(theirOneTime.size());for(Map.Entry<String,ArrayDeque<PreKey>> e:theirOneTime.entrySet()){o.writeUTF(e.getKey());o.writeInt(e.getValue().size());for(PreKey k:e.getValue())k.write(o);}
@@ -111,9 +117,9 @@ public final class KeyPools {
         });}catch(Exception e){throw new IllegalStateException(e);}
     }
     public static KeyPools decode(byte[] bytes)throws IOException{
-        DataInputStream in=Packets.input(bytes);if(!"Enigma/key-pools/v1".equals(in.readUTF()))throw new IOException("Unknown key pool format");KeyPools p=new KeyPools();
-        int n=count(in,100000);for(int i=0;i<n;i++){PreKey k=PreKey.read(in);byte[] pk=new byte[32];in.readFully(pk);p.ownOneTime.put(k.idText(),new Owned(k,pk,in.readUTF()));}
-        n=count(in,1000);for(int i=0;i<n;i++){PreKey k=PreKey.read(in);byte[] pk=new byte[32];in.readFully(pk);p.ownBackups.add(new Owned(k,pk,RESERVE_CONTACT));}
+        DataInputStream in=Packets.input(bytes);if(!"Enigma/key-pools/v2".equals(in.readUTF()))throw new IOException("Unknown key pool format");KeyPools p=new KeyPools();
+        int n=count(in,100000);for(int i=0;i<n;i++){PreKey k=PreKey.read(in);byte[] pk=new byte[PRIVATE];in.readFully(pk);p.ownOneTime.put(k.idText(),new Owned(k,pk,in.readUTF()));}
+        n=count(in,1000);for(int i=0;i<n;i++){PreKey k=PreKey.read(in);byte[] pk=new byte[PRIVATE];in.readFully(pk);p.ownBackups.add(new Owned(k,pk,RESERVE_CONTACT));}
         n=count(in,100000);for(int i=0;i<n;i++){String c=in.readUTF();int m=count(in,MAX_THEIRS);ArrayDeque<PreKey> q=new ArrayDeque<>();for(int j=0;j<m;j++)q.addLast(PreKey.read(in));p.theirOneTime.put(c,q);}
         n=count(in,100000);for(int i=0;i<n;i++){String c=in.readUTF();p.theirBackup.put(c,PreKey.read(in));}
         n=count(in,100000);for(int i=0;i<n;i++){String c=in.readUTF();int m=count(in,RESERVE);ArrayDeque<PreKey> q=new ArrayDeque<>();for(int j=0;j<m;j++)q.addLast(PreKey.read(in));p.heldReserve.put(c,q);}

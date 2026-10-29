@@ -6,21 +6,24 @@ import java.util.*;
 import javax.crypto.Cipher;
 
 /**
- * 0.7.0 message package ("ENG4"), see SYSTEM_DESIGN "Proposed 0.7.0 message security".
+ * 0.7.0 message package ("ENG5"), see SYSTEM_DESIGN "0.7.0 message security".
  * The content is encrypted once with a random content key. For each recipient that key is wrapped
- * under an X3DH secret (sender identity + fresh ephemeral key, against the recipient's identity,
- * signed backup key and, when available, one single-use key), with the group secret as HKDF salt.
- * Inside the encryption the sender's Ed25519 signature covers the outer header, group, roster
- * revision, sender, every recipient and their key IDs, and the content hash.
+ * under a hybrid secret: X3DH (sender identity + fresh ephemeral key, against the recipient's
+ * identity, signed backup key and, when available, one single-use key) plus an ML-KEM-768
+ * encapsulation to the same one-time key (or the backup key), all in one HKDF with the group
+ * secret as salt. Reading a message therefore needs X25519 and ML-KEM broken and the group secret.
+ * Inside the encryption the sender's hybrid Ed25519 + ML-DSA signature covers the outer header,
+ * group, roster revision, sender, every recipient and their key IDs, and the content hash.
  *
  * Group members are read from {@link Protocol.Group#members}: fingerprint → base64 of
  * {@link Identity.Public#encode()}.
  */
 public final class SealedProtocol {
     private SealedProtocol(){}
-    static final String MAGIC="ENG4";
+    static final String MAGIC="ENG5";
     public static final int MAX_RECIPIENTS=50,MAX_REFILL=KeyPools.REFILL;
     public static final long MAX_CONTENT=50L*1024*1024;
+    static final int MAX_OUTER=256*1024,MAX_INNER=2*1024*1024,MAX_ENTRY=4096;
     private static final byte[] NO_KEY=new byte[8];
 
     /** One addressee as seen by the sender: verified keys from {@link KeyPools}. */
@@ -72,18 +75,19 @@ public final class SealedProtocol {
         try{
             List<byte[]> entries=new ArrayList<>();
             for(Recipient r:to){
-                byte[] ephemeral=entropy.next32("ephemeral"),ephemeralPublic=Identity.x25519Public(ephemeral),secret=null;
+                byte[] ephemeral=entropy.next32("ephemeral"),ephemeralPublic=Identity.x25519Public(ephemeral),secret=null,encapsRandom=entropy.next32("kem-encapsulation");
+                byte[][] kem=PostQuantum.encapsulate(r.oneTime==null?r.backup.kemPublic:r.oneTime.kemPublic,encapsRandom);
                 try{
-                    byte[] oneTimeId=r.oneTime==null?NO_KEY:r.oneTime.id;
-                    byte[] info=info(g,messageId,self,r.identity.fingerprint(),r.backup.id,oneTimeId,ephemeralPublic);
-                    secret=x3dh(g,info,me.agree(r.backup.publicKey),Identity.agree(ephemeral,r.identity.agree),Identity.agree(ephemeral,r.backup.publicKey),r.oneTime==null?null:Identity.agree(ephemeral,r.oneTime.publicKey));
+                    byte[] oneTimeId=r.oneTime==null?NO_KEY:r.oneTime.id,kemCipher=kem[1];
+                    byte[] info=info(g,messageId,self,r.identity.fingerprint(),r.backup.id,oneTimeId,ephemeralPublic,kemCipher);
+                    secret=hybrid(g,info,me.agree(r.backup.publicKey),Identity.agree(ephemeral,r.identity.agree),Identity.agree(ephemeral,r.backup.publicKey),r.oneTime==null?null:Identity.agree(ephemeral,r.oneTime.publicKey),kem[0]);
                     byte[] wrapNonce=Arrays.copyOf(entropy.next32("wrap-nonce"),12),wrapped=Protocol.aes(Cipher.ENCRYPT_MODE,secret,wrapNonce,info,contentKey);
-                    entries.add(Packets.pack(o->{o.write(r.backup.id);o.write(oneTimeId);o.write(ephemeralPublic);o.write(wrapNonce);Packets.blob(o,wrapped);}));
-                }finally{Arrays.fill(ephemeral,(byte)0);if(secret!=null)Arrays.fill(secret,(byte)0);}
+                    entries.add(Packets.pack(o->{o.write(r.backup.id);o.write(oneTimeId);o.write(ephemeralPublic);o.write(kemCipher);o.write(wrapNonce);Packets.blob(o,wrapped);}));
+                }finally{Arrays.fill(ephemeral,(byte)0);Arrays.fill(encapsRandom,(byte)0);Arrays.fill(kem[0],(byte)0);if(secret!=null)Arrays.fill(secret,(byte)0);}
             }
             byte[] outer=Packets.pack(o->{o.writeUTF(MAGIC);o.writeUTF(g.id);o.writeUTF(messageId);o.writeUTF(self);o.writeInt(entries.size());for(byte[] e:entries)Packets.blob(o,e);});
             byte[] inner=Packets.pack(o->{
-                o.writeUTF("Enigma/sealed/v1");o.writeUTF(g.id);o.writeLong(g.rosterRevision);o.writeUTF(messageId);o.writeUTF(self);Packets.blob(o,me.publicKey.encode());
+                o.writeUTF("Enigma/sealed/v2");o.writeUTF(g.id);o.writeLong(g.rosterRevision);o.writeUTF(messageId);o.writeUTF(self);Packets.blob(o,me.publicKey.encode());
                 o.writeLong(created);o.writeLong(expires);o.writeBoolean(c.viewOnce);o.writeUTF(c.name);o.writeUTF(c.mime);Packets.blob(o,sha256(c.body));
                 o.writeInt(to.size());for(Recipient r:to){o.writeUTF(r.identity.fingerprint());o.write(r.backup.id);o.write(r.oneTime==null?NO_KEY:r.oneTime.id);o.writeInt(r.refill.size());for(PreKey k:r.refill)k.write(o);}
                 myBackup.write(o);Packets.blob(o,carrier==null?new byte[0]:carrier);
@@ -96,14 +100,14 @@ public final class SealedProtocol {
     }
 
     /** Send as text: the same package as pasteable base64 behind this prefix. */
-    public static final String TEXT_PREFIX="ENG4:";
+    public static final String TEXT_PREFIX="ENG5:";
     public static String toText(byte[] packet){return TEXT_PREFIX+Protocol.b64(packet);}
     public static byte[] fromText(String text){String wire=Packets.clean(text);if(!wire.startsWith(TEXT_PREFIX))throw new SecurityException("That is not an Enigma message.");return Protocol.un64(wire.substring(TEXT_PREFIX.length()));}
     /** The group a package belongs to, for routing before any key is touched. */
     public static String groupOf(byte[] packet)throws IOException{return outer(packet)[0];}
     /** The package's message ID, readable before decryption (to find an already-opened copy). */
     public static String idOf(byte[] packet)throws IOException{return outer(packet)[1];}
-    private static String[] outer(byte[] packet)throws IOException{DataInputStream in=Packets.input(Packets.blob(Packets.input(packet),64*1024));if(!MAGIC.equals(in.readUTF()))throw new IOException("Not an Enigma message");return new String[]{in.readUTF(),in.readUTF()};}
+    private static String[] outer(byte[] packet)throws IOException{DataInputStream in=Packets.input(Packets.blob(Packets.input(packet),MAX_OUTER));if(!MAGIC.equals(in.readUTF()))throw new IOException("Not an Enigma message");return new String[]{in.readUTF(),in.readUTF()};}
 
     // ---- receiving ----
     /**
@@ -112,7 +116,7 @@ public final class SealedProtocol {
      */
     public static Opened open(Protocol.Group g,Identity me,KeyPools pools,byte[] packet)throws Exception{
         Protocol.live(g);String self=me.fingerprint();
-        DataInputStream p=Packets.input(packet);byte[] outer=Packets.blob(p,64*1024);byte[] nonce=new byte[12];p.readFully(nonce);byte[] cipher=Packets.blob(p,(int)MAX_CONTENT+1024*1024);Packets.end(p);
+        DataInputStream p=Packets.input(packet);byte[] outer=Packets.blob(p,MAX_OUTER);byte[] nonce=new byte[12];p.readFully(nonce);byte[] cipher=Packets.blob(p,(int)MAX_CONTENT+1024*1024);Packets.end(p);
         DataInputStream o=Packets.input(outer);
         if(!MAGIC.equals(o.readUTF()))throw new SecurityException("Not an Enigma message");
         String groupId=o.readUTF(),messageId=o.readUTF(),senderId=o.readUTF();
@@ -122,13 +126,15 @@ public final class SealedProtocol {
         int count=o.readInt();if(count<1||count>MAX_RECIPIENTS)throw new SecurityException("Invalid recipient count");
         byte[] contentKey=null,usedOneTime=null,usedBackup=null;
         for(int i=0;i<count;i++){
-            DataInputStream e=Packets.input(Packets.blob(o,1024));byte[] backupId=new byte[8],oneTimeId=new byte[8],ephemeral=new byte[32],wrapNonce=new byte[12];
-            e.readFully(backupId);e.readFully(oneTimeId);e.readFully(ephemeral);e.readFully(wrapNonce);byte[] wrapped=Packets.blob(e,64);Packets.end(e);
+            DataInputStream e=Packets.input(Packets.blob(o,MAX_ENTRY));byte[] backupId=new byte[8],oneTimeId=new byte[8],ephemeral=new byte[32],kemCipher=new byte[PostQuantum.KEM_CIPHERTEXT],wrapNonce=new byte[12];
+            e.readFully(backupId);e.readFully(oneTimeId);e.readFully(ephemeral);e.readFully(kemCipher);e.readFully(wrapNonce);byte[] wrapped=Packets.blob(e,64);Packets.end(e);
             if(contentKey!=null||!pools.ownsBackup(backupId))continue;
             boolean reduced=Arrays.equals(oneTimeId,NO_KEY);byte[] oneTimePrivate=reduced?null:pools.oneTimePrivate(oneTimeId);
             if(!reduced&&oneTimePrivate==null)throw new SecurityException("This message was already opened, or its one-time key no longer exists");
-            byte[] backupPrivate=pools.backupPrivate(backupId),info=info(g,messageId,senderId,self,backupId,oneTimeId,ephemeral);
-            byte[] secret=x3dh(g,info,Identity.agree(backupPrivate,sender.agree),me.agree(ephemeral),Identity.agree(backupPrivate,ephemeral),reduced?null:Identity.agree(oneTimePrivate,ephemeral));
+            byte[] backupPrivate=pools.backupPrivate(backupId),info=info(g,messageId,senderId,self,backupId,oneTimeId,ephemeral,kemCipher);
+            byte[] backupX=Arrays.copyOf(backupPrivate,32),oneTimeX=reduced?null:Arrays.copyOf(oneTimePrivate,32),kemSeed=Arrays.copyOfRange(reduced?backupPrivate:oneTimePrivate,32,KeyPools.PRIVATE),secret;
+            try{secret=hybrid(g,info,Identity.agree(backupX,sender.agree),me.agree(ephemeral),Identity.agree(backupX,ephemeral),reduced?null:Identity.agree(oneTimeX,ephemeral),PostQuantum.decapsulate(kemSeed,kemCipher));}
+            finally{Arrays.fill(backupX,(byte)0);if(oneTimeX!=null)Arrays.fill(oneTimeX,(byte)0);Arrays.fill(kemSeed,(byte)0);}
             try{contentKey=Protocol.aes(Cipher.DECRYPT_MODE,secret,wrapNonce,info,wrapped);}finally{Arrays.fill(secret,(byte)0);}
             if(contentKey.length!=32)throw new SecurityException("Invalid content key");
             usedOneTime=reduced?null:oneTimeId;usedBackup=backupId;
@@ -136,12 +142,12 @@ public final class SealedProtocol {
         Packets.end(o);
         if(contentKey==null)throw new SecurityException("This message is not addressed to you");
         byte[] plain;try{plain=Protocol.aes(Cipher.DECRYPT_MODE,contentKey,nonce,outer,cipher);}finally{Arrays.fill(contentKey,(byte)0);}
-        DataInputStream pl=Packets.input(plain);byte[] inner=Packets.blob(pl,64*1024),signature=Packets.blob(pl,64),body=Packets.blob(pl,(int)MAX_CONTENT);Packets.end(pl);
+        DataInputStream pl=Packets.input(plain);byte[] inner=Packets.blob(pl,MAX_INNER),signature=Packets.blob(pl,Identity.SIGNATURE),body=Packets.blob(pl,(int)MAX_CONTENT);Packets.end(pl);
         if(!sender.verify(signedPart(outer,inner),signature))throw new SecurityException("Sender signature is invalid");
         DataInputStream in=Packets.input(inner);
-        if(!"Enigma/sealed/v1".equals(in.readUTF())||!groupId.equals(in.readUTF()))throw new SecurityException("Message header mismatch");
+        if(!"Enigma/sealed/v2".equals(in.readUTF())||!groupId.equals(in.readUTF()))throw new SecurityException("Message header mismatch");
         long revision=in.readLong();
-        if(!messageId.equals(in.readUTF())||!senderId.equals(in.readUTF())||!sender.equals(Identity.Public.decode(Packets.blob(in,64))))throw new SecurityException("Message header mismatch");
+        if(!messageId.equals(in.readUTF())||!senderId.equals(in.readUTF())||!sender.equals(Identity.Public.decode(Packets.blob(in,Identity.PUBLIC))))throw new SecurityException("Message header mismatch");
         long created=in.readLong(),expires=in.readLong();boolean viewOnce=in.readBoolean();String name=in.readUTF(),mime=in.readUTF();
         if(!MessageDigest.isEqual(sha256(body),Packets.blob(in,32)))throw new SecurityException("Content hash mismatch");
         int n=in.readInt();if(n!=count)throw new SecurityException("Recipient list mismatch");
@@ -157,7 +163,7 @@ public final class SealedProtocol {
         }
         if(mine==null)throw new SecurityException("You are not in the signed recipient list");
         PreKey senderBackup=PreKey.read(in);if(!senderBackup.verify(sender,PreKey.BACKUP))throw new SecurityException("Sender backup key is invalid");
-        byte[] carrier=Packets.blob(in,30000);Packets.end(in);
+        byte[] carrier=Packets.blob(in,JoinProtocol.MAX_CARRIER);Packets.end(in);
         if(revision<0)throw new SecurityException("Invalid roster revision");
         if(expires!=0&&System.currentTimeMillis()>expires)throw new SecurityException("This message has expired");
         return new Opened(senderId,messageId,name,mime,body,created,expires,viewOnce,recipients,mine,senderBackup,carrier,usedOneTime);
@@ -173,15 +179,18 @@ public final class SealedProtocol {
         String encoded=g.members.get(fingerprint);if(encoded==null||g.blocked.contains(fingerprint))return null;
         Identity.Public key=Identity.Public.decode(Protocol.un64(encoded));if(!key.fingerprint().equals(fingerprint))throw new SecurityException("Member key does not match its fingerprint");return key;
     }
-    private static byte[] info(Protocol.Group g,String messageId,String sender,String recipient,byte[] backupId,byte[] oneTimeId,byte[] ephemeral)throws Exception{
-        return Packets.pack(o->{o.writeUTF("Enigma/X3DH/v1");o.writeUTF(g.id);o.writeUTF(messageId);o.writeUTF(sender);o.writeUTF(recipient);o.write(backupId);o.write(oneTimeId);o.write(ephemeral);});
+    private static byte[] info(Protocol.Group g,String messageId,String sender,String recipient,byte[] backupId,byte[] oneTimeId,byte[] ephemeral,byte[] kemCipher)throws Exception{
+        return Packets.pack(o->{o.writeUTF("Enigma/PQX3DH/v1");o.writeUTF(g.id);o.writeUTF(messageId);o.writeUTF(sender);o.writeUTF(recipient);o.write(backupId);o.write(oneTimeId);o.write(ephemeral);o.write(kemCipher);});
     }
-    /** X3DH: KDF(F || DH1 || DH2 || DH3 [|| DH4]) with the group secret as salt, so non-members cannot derive it. */
-    private static byte[] x3dh(Protocol.Group g,byte[] info,byte[] dh1,byte[] dh2,byte[] dh3,byte[] dh4)throws Exception{
-        ByteArrayOutputStream km=new ByteArrayOutputStream();byte[] f=new byte[32];Arrays.fill(f,(byte)0xff);km.write(f);km.write(dh1);km.write(dh2);km.write(dh3);if(dh4!=null)km.write(dh4);
+    /**
+     * Hybrid X3DH (as in Signal's PQXDH): KDF(F || DH1 || DH2 || DH3 [|| DH4] || ML-KEM secret) with
+     * the group secret as salt, so non-members cannot derive it and both algorithm families must fail.
+     */
+    private static byte[] hybrid(Protocol.Group g,byte[] info,byte[] dh1,byte[] dh2,byte[] dh3,byte[] dh4,byte[] kem)throws Exception{
+        ByteArrayOutputStream km=new ByteArrayOutputStream();byte[] f=new byte[32];Arrays.fill(f,(byte)0xff);km.write(f);km.write(dh1);km.write(dh2);km.write(dh3);if(dh4!=null)km.write(dh4);km.write(kem);
         byte[] material=km.toByteArray();
-        try{return Protocol.hkdf(material,g.seed,info);}finally{Arrays.fill(material,(byte)0);Arrays.fill(dh1,(byte)0);Arrays.fill(dh2,(byte)0);Arrays.fill(dh3,(byte)0);if(dh4!=null)Arrays.fill(dh4,(byte)0);}
+        try{return Protocol.hkdf(material,g.seed,info);}finally{Arrays.fill(material,(byte)0);Arrays.fill(dh1,(byte)0);Arrays.fill(dh2,(byte)0);Arrays.fill(dh3,(byte)0);if(dh4!=null)Arrays.fill(dh4,(byte)0);Arrays.fill(kem,(byte)0);}
     }
-    private static byte[] signedPart(byte[] outer,byte[] inner)throws Exception{return Packets.pack(o->{o.writeUTF("Enigma/sealed-signature/v1");Packets.blob(o,sha256(outer));Packets.blob(o,inner);});}
+    private static byte[] signedPart(byte[] outer,byte[] inner)throws Exception{return Packets.pack(o->{o.writeUTF("Enigma/sealed-signature/v2");Packets.blob(o,sha256(outer));Packets.blob(o,inner);});}
     private static byte[] sha256(byte[] b)throws Exception{return MessageDigest.getInstance("SHA-256").digest(b);}
 }

@@ -26,7 +26,7 @@ import static org.junit.Assert.*;
  */
 @RunWith(AndroidJUnit4.class)
 public final class ScreenshotTest {
-    private static final String PASS="Screenshot demo passphrase";
+    private static final String PASS="Screenshot demo passphrase",PIN="2580";
     private static final long MIN=60000;
 
     @Test public void readmeScreens()throws Exception{
@@ -37,7 +37,8 @@ public final class ScreenshotTest {
         seed(context);
         try(ActivityScenario<MainActivity> s=ActivityScenario.launch(MainActivity.class)){
             waitFor(s,"Unlock Enigma");shot(s,"01-unlock");
-            s.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(s,"Unlock");waitFor(s,"Receive");shot(s,"02-messages");
+            s.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(s,"Unlock");waitFor(s,"Enter your PIN");
+            s.onActivity(a->editor(a.getWindow().getDecorView()).setText(PIN));click(s,"Unlock");waitFor(s,"Receive");shot(s,"02-messages");
             clickCard(s,"Sam");waitFor(s,"Back to messages");shot(s,"03-chat");
             clickCard(s,"beach.jpg");waitFor(s,"Back to chat");shot(s,"04-photo");
             click(s,"Back to chat");clickCard(s,"Message");waitFor(s,"Back to chat");shot(s,"05-message");
@@ -55,7 +56,7 @@ public final class ScreenshotTest {
     }
     private void seed(Context context)throws Exception{
         ENTROPY.addCamera(MessageDigest.getInstance("SHA-256").digest("screenshot demo".getBytes(StandardCharsets.UTF_8)));
-        byte[] key=new PasswordLock(context).create(PASS.toCharArray());Vault v;try{v=new Vault(context,key);}finally{Arrays.fill(key,(byte)0);}
+        byte[] key=new PasswordLock(context).create(PASS.toCharArray()),master=Protocol.random(32);Vault v;try{new PinLock(context).set(key,PIN,"0000",master);v=new Vault(context,master);}finally{Arrays.fill(key,(byte)0);Arrays.fill(master,(byte)0);}
         v.deviceName="Alex's phone";v.setupCompleted=true;v.setupCapturedAt=System.currentTimeMillis();v.identity=Identity.generate(ENTROPY);
         Demo sam=new Demo(),jordan=new Demo();
         Protocol.Group family=JoinProtocol.create("Family",v.deviceName,v.identity,v.pools,ENTROPY),work=JoinProtocol.create("Work",v.deviceName,v.identity,v.pools,ENTROPY);
@@ -77,7 +78,7 @@ public final class ScreenshotTest {
         m.pools.setTheirBackup(v.identity.fingerprint(),v.identity.publicKey,v.pools.backup(v.identity,ENTROPY,now));m.pools.addTheirs(v.identity.fingerprint(),v.identity.publicKey,v.pools.issue(v.identity,ENTROPY,m.fp,KeyPools.POOL,now));
         g.members.put(m.fp,Protocol.b64(m.id.publicKey.encode()));g.memberNames.put(m.fp,name);g.memberStatus.put(m.fp,"Joined");JoinProtocol.signRoster(g,v.identity,v.pools,ENTROPY,Collections.emptyMap());
     }
-    /** A real ENG4 package between this device and a demo member, opened and stored as the app does. */
+    /** A real ENG5 package between this device and a demo member, opened and stored as the app does. */
     private static void file(Context context,Vault v,Protocol.Group g,Demo m,String name,String mime,byte[] body,boolean outgoing,long created)throws Exception{
         Identity from=outgoing?v.identity:m.id;KeyPools fromPools=outgoing?v.pools:m.pools;Identity.Public to=outgoing?m.id.publicKey:v.identity.publicKey;String toId=to.fingerprint();
         byte[] packet=SealedProtocol.seal(g,from,fromPools.backup(from,ENTROPY,created),Collections.singletonList(new SealedProtocol.Recipient(to,fromPools.theirBackup(toId),fromPools.take(toId),null)),new SealedProtocol.Content(name,mime,body,0,false),new byte[0],ENTROPY);

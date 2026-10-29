@@ -33,17 +33,21 @@ Use disposable development data. To retain an installation, install over it and 
 
 ## JVM unit tests
 
-`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. `SealedProtocolTest`, `JoinProtocolTest`, `JoiningFlowTest`, `LocalJoinTest`, `JoinBootstrapTest` and `InboxTest` cover the 0.7.0 protocol: one-time keys, multiple recipients, group binding, key pools, entropy, joining, introductions, transport frames and labels.
+`gradlew testDebugUnitTest` runs the pure-Java tests, with no phone or emulator needed. `SealedProtocolTest`, `JoinProtocolTest`, `JoiningFlowTest`, `LocalJoinTest`, `JoinBootstrapTest` and `InboxTest` cover the 0.7.0 protocol: one-time keys, multiple recipients, group binding, key pools, entropy, joining, introductions, transport frames and labels. `SealedProtocolTest` also checks that damaging either the X25519 or the ML-KEM half of a key stops decryption, and that a signature needs both its Ed25519 and ML-DSA halves. `PinBoxTest` covers the PIN key, panic PIN and stored attempt count.
+
+`PinLockTest` (instrumentation, opt-in `enigmaUiTest=true`, disposable emulator only) checks wrong-PIN counting, the wipe after the fifth wrong PIN and the panic-PIN wipe. Wiping deletes every Keystore key of the app; never run it on a phone.
 
 ## 0.7.0 - priority phone checks (not yet run)
 
-1. Install over 0.6.0. The app should show "New keys needed" and keep the old data. Start fresh asks for the passphrase and confirmation, then runs camera setup.
+1. Install over 0.6.0 (or the earlier 0.7.0 test APK). After the passphrase, the app asks for a new PIN and panic PIN; then it shows "New keys needed" and keeps the old data. Start fresh asks for the passphrase and confirmation, then runs camera setup.
+1a. Lock and unlock: passphrase, then PIN. Enable biometric unlock again (setting the PIN turned it off); then fingerprint, then PIN. A wrong PIN shows the attempts left; a correct PIN resets the count.
+1b. On a phone whose Enigma data you do not need: five wrong PINs erase Enigma, and so does the panic PIN. The app should restart at "Protect Enigma".
 2. Join a second phone nearby (QR and NFC) and by file. Both phones should show matching check codes.
 3. Send a message from each phone to the other. Neither should say "Reduced protection". Opening the same .enigma file a second time shows the stored copy.
 4. Join a third phone. After the owner sends any message to the second phone, the second and third phones message each other without "Reduced protection".
 5. Send one message to two people. Both open it; a third member gets "not addressed to you".
 6. View once: the message opens once and is not listed as openable afterwards.
-7. Send as text: paste the ENG4: text into a chat and open it with Receive, then Open pasted text.
+7. Send as text: paste the ENG5: text into a chat and open it with Receive, then Open pasted text.
 
 ## Automated Android checks
 

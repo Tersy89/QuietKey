@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import static org.junit.Assert.*;
 
-/** 0.7.0 joining: QKJ3/QKG3/QKA3, owner-signed v3 rosters and introductions for later members. */
+/** 0.7.0 joining: QKJ4/QKG4/QKA4, owner-signed v4 rosters and introductions for later members. */
 public final class JoinProtocolTest {
     private static final class Device {
         final Identity id;final KeyPools pools=new KeyPools();final String fp;Protocol.Group group;

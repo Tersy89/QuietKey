@@ -1,3 +1,48 @@
+Enigma 0.7.0 hybrid algorithms and two-step unlock - 30 October 2026 (branch feature/0.7.0-messages)
+
+Owner request: a second algorithm family on top of the current one, and biometric + PIN unlock
+with a wipe after 5 wrong PINs and a panic PIN (default 9999). Implemented (SYSTEM_DESIGN
+decisions 11 and 12):
+- PostQuantum: ML-KEM-768 and ML-DSA-65 from Bouncy Castle 1.86, keys from Entropy seeds.
+- Identity: Ed25519 + ML-DSA-65 signing, X25519 agreement; sign() gives both signatures, verify()
+  requires both. PreKey and KeyPools: every backup and one-time key is X25519 + ML-KEM-768.
+- SealedProtocol ENG5: per-recipient key = HKDF(X3DH results || ML-KEM secret, salt = group secret).
+- JoinProtocol QKJ4/QKG4/QKA4: hybrid signatures; invitation key adds ML-KEM to the joiner's
+  backup key. Packet limits raised (request 64,000 chars, invitation 600,000, receipt 200,000,
+  roster 256 KiB).
+- Vault format 3; version-1 and version-2 vaults are kept as legacy until Start fresh.
+- PinBox/PinLock: master key encrypted under HKDF(first-step secret, Argon2id(PIN)); attempt count,
+  panic PIN and box in files/pin.qkp under the device Keystore key; wipe deletes all Keystore keys,
+  files, cache and preferences, then asks Android to clear app data. Earlier installs set a PIN
+  (with the passphrase) before anything else.
+Version 0.7.0 (versionCode 12).
+
+Executed on this PC (Windows, JDK 17.0.20.1, Gradle 8.9, AGP 8.7.3, SDK 35):
+- gradlew clean testDebugUnitTest assembleDebug assembleDebugAndroidTest lintDebug: success.
+- 67 JVM unit tests, 0 failures. New: SealedProtocolTest readingNeedsBothX25519AndMlKem and
+  signaturesNeedBothEd25519AndMlDsa; PinBoxTest (3 tests).
+- Lint: 0 errors, 32 warnings.
+- Disposable emulator EnigmaShots (API 35, wiped data):
+  - PinLockTest (2 tests) and PasswordVaultTest (1 test): OK (3 tests).
+  - ScreenshotTest: OK (1 test, 36 s), now unlocking with passphrase then PIN. docs/screenshots
+    refreshed from that run.
+  - Driven by hand through adb on the same emulator: installed the previous branch Enigma.apk
+    (versionCode 11) and created a passphrase; installed this build over it. Unlock showed
+    "Add an unlock PIN"; saving the PIN led to "New keys needed" with the old vault kept. Lock and
+    unlock: wrong PIN reported 4 attempts left, the correct PIN opened the app. Panic PIN 9999
+    erased the app (process ended, files directory gone, restart at "Protect Enigma"). Fresh
+    setup with passphrase and PIN, then 5 wrong PINs: 4, 3, 2, 1 attempts left, then erased.
+
+Not run:
+- biometric unlock with the PIN (needs an enrolled fingerprint; emulator or phone);
+- two-device joining or messaging with the hybrid keys (covered only by JVM tests);
+- physical phones.
+Test APK: Enigma.apk on this branch, app.quietkey.debug 0.7.0-debug versionCode 12, 6,350,958 bytes,
+SHA-256 6312313471aaf5cce3ca77dd918f1f8563674cfa0dbc321d1fd4c6add3c02ad7.
+These are tests, not a security audit.
+
+----------------------------------------------------------------------------------------------
+
 Enigma 0.7.0 app switch-over - 29 October 2026 (branch feature/0.7.0-messages)
 
 The app now uses Entropy (camera + motion sensors), Identity/KeyPools in the vault (format 2),

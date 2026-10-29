@@ -5,7 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import static org.junit.Assert.*;
 
-/** 0.7.0 ENG4 packages: X3DH one-time keys, multiple recipients, group binding and key pools. */
+/** 0.7.0 ENG5 packages: X3DH one-time keys, multiple recipients, group binding and key pools. */
 public final class SealedProtocolTest {
     private static final class Member {
         final Identity id;final KeyPools pools=new KeyPools();final String fp;
@@ -34,6 +34,31 @@ public final class SealedProtocolTest {
         SealedProtocol.Opened o=SealedProtocol.open(group,m.id,m.pools,packet);SealedProtocol.accept(group,m.pools,o);return o;
     }
 
+    private byte[] sendWith(Member from,Member to,PreKey oneTime)throws Exception{
+        return SealedProtocol.seal(group,from.id,from.pools.backup(from.id,entropy,now),Collections.singletonList(new SealedProtocol.Recipient(to.id.publicKey,from.pools.theirBackup(to.fp),oneTime,null)),
+            new SealedProtocol.Content(Inbox.TEXT_NAME,Inbox.TEXT_MIME,"x".getBytes(StandardCharsets.UTF_8),0,false),new byte[0],entropy);
+    }
+    /** Decision 11: the message key needs both the X25519 and the ML-KEM private halves of the one-time key. */
+    @Test public void readingNeedsBothX25519AndMlKem()throws Exception{
+        PreKey k1=a.pools.take(b.fp),k2=a.pools.take(b.fp),k3=a.pools.take(b.fp);
+        b.pools.oneTimePrivate(k1.id)[5]^=1;   // X25519 half damaged, ML-KEM intact
+        assertThrows(Exception.class,()->SealedProtocol.open(group,b.id,b.pools,sendWith(a,b,k1)));
+        b.pools.oneTimePrivate(k2.id)[40]^=1;  // ML-KEM half damaged, X25519 intact
+        assertThrows(Exception.class,()->SealedProtocol.open(group,b.id,b.pools,sendWith(a,b,k2)));
+        assertEquals("x",new String(SealedProtocol.open(group,b.id,b.pools,sendWith(a,b,k3)).body,StandardCharsets.UTF_8));
+        PreKey backup=a.pools.theirBackup(b.fp);b.pools.backupPrivate(backup.id)[40]^=1; // reduced protection also uses ML-KEM
+        assertThrows(Exception.class,()->SealedProtocol.open(group,b.id,b.pools,sendWith(a,b,null)));
+    }
+    /** Decision 11: a signature is valid only when the Ed25519 half and the ML-DSA half both verify. */
+    @Test public void signaturesNeedBothEd25519AndMlDsa(){
+        byte[] text="roster".getBytes(StandardCharsets.UTF_8),sig=a.id.sign(text);
+        assertEquals(Identity.SIGNATURE,sig.length);assertTrue(a.id.publicKey.verify(text,sig));
+        byte[] classic=sig.clone();classic[3]^=1;assertFalse(a.id.publicKey.verify(text,classic));
+        byte[] pq=sig.clone();pq[200]^=1;assertFalse(a.id.publicKey.verify(text,pq));
+        byte[] mixed=b.id.sign(text);System.arraycopy(sig,0,mixed,0,64);assertFalse(a.id.publicKey.verify(text,mixed));
+        assertFalse(a.id.publicKey.verify(text,Arrays.copyOf(sig,64)));
+        assertEquals(Identity.PUBLIC,Identity.Public.decode(a.id.publicKey.encode()).encode().length);
+    }
     @Test public void recipientReadsOnceThenTheKeyIsGone()throws Exception{
         byte[] packet=send(a,"Gate code 4471",b);
         SealedProtocol.Opened o=receive(b,packet);

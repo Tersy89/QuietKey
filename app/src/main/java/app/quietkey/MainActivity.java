@@ -35,6 +35,9 @@ public final class MainActivity extends FragmentActivity {
     private final Handler ui=new Handler(Looper.getMainLooper());
     private Vault vault;
     private PasswordLock passwordLock;
+    private PinLock pinLock;
+    /** First-factor secret (from passphrase or biometrics): awaiting the PIN, and kept while unlocked for security changes. */
+    private byte[] pendingSecret,unlockSecret;
     private volatile int session;
     private volatile boolean sessionLocked=true;
     private boolean handoff;private long handoffUntil;
@@ -79,7 +82,7 @@ public final class MainActivity extends FragmentActivity {
     private interface Success<T>{void run(T result)throws Exception;}
 
     @Override public void onCreate(Bundle saved) {
-        super.onCreate(saved);passwordLock=new PasswordLock(this);registerReceiver(screenLock,new IntentFilter(Intent.ACTION_SCREEN_OFF));getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        super.onCreate(saved);passwordLock=new PasswordLock(this);pinLock=new PinLock(this);registerReceiver(screenLock,new IntentFilter(Intent.ACTION_SCREEN_OFF));getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if(saved!=null) {
             pendingName=saved.getString("pendingName");capturePurpose=saved.getString("capturePurpose");
             manualAction=saved.getString("manualAction");manualGroupId=saved.getString("manualGroupId");
@@ -128,6 +131,7 @@ public final class MainActivity extends FragmentActivity {
         if(isDestroyed())return;if(vault==null){lockScreen();return;}
         body.removeAllViews();message=null;output=null;nav.removeAllViews();recipientActions.clear();if(!"viewer".equals(page))closeViewer();
         progress.setText("Working…");progress.setVisibility(busy?View.VISIBLE:View.GONE);
+        if(!pinLock.configured()){pinSetup();return;}
         if(vault.legacy){upgrade();return;}
         if(!vault.setupCompleted||vault.identity==null){setup();return;}
         String[] tabs={"messages","groups","identity"},names={"Messages","Groups","Device"};
@@ -169,7 +173,7 @@ public final class MainActivity extends FragmentActivity {
             }finally{Arrays.fill(digest,(byte)0);}
         },group->{ownId=vault.identity.fingerprint();selected=group;chooseDefaultRecipient();page=setup?"messages":"groups";capturePurpose=null;render();});
     }
-    /** 0.6.0 vaults hold RSA keys this version cannot use. Nothing is deleted until the owner confirms. */
+    /** Older vaults (0.6.0 RSA, early 0.7.0 without ML-KEM/ML-DSA) hold keys this version cannot use. Nothing is deleted until the owner confirms. */
     private void upgrade(){
         title("New keys needed");
         note("Enigma "+BuildConfig.VERSION_NAME+" uses new encryption keys with forward secrecy. Groups and messages from earlier versions can't be opened by it. They are still stored, unchanged, on this phone.");
@@ -191,9 +195,10 @@ public final class MainActivity extends FragmentActivity {
     }
     private void securitySettings(){
         title("Security & unlock");body.addView(button("Back to device",()->{page="identity";render();}));
-        body.addView(primary("Lock Enigma now",this::lockNow));body.addView(button("Change app passphrase",this::changePassword));
+        body.addView(primary("Lock Enigma now",this::lockNow));body.addView(button("Change app passphrase",this::changePassword));body.addView(button("Change PIN or panic PIN",this::changePin));
         body.addView(button(passwordLock.biometricConfigured()?"Disable biometric unlock":"Enable biometric unlock",()->reauth("Confirm security change",()->{if(passwordLock.biometricConfigured())work(()->{passwordLock.disableBiometric();return true;},ok->render());else biometric(true);})));
-        note("Biometrics unlock the app. Your passphrase is still required to change security settings, reset or export readable files.");
+        note("Unlocking takes two steps: your passphrase or fingerprint, then your PIN. After "+PinBox.MAX_ATTEMPTS+" wrong PINs, or on the panic PIN, Enigma erases its keys and data. Your passphrase is still required to change security settings, reset or export readable files.");
+        try{if(PinBox.DEFAULT_PANIC.equals(pinLock.state().panic))note("Your panic PIN is still "+PinBox.DEFAULT_PANIC+". Anyone who knows the default can erase Enigma; change it.");}catch(Exception ignored){}
     }
     private void groups() {
         title("Groups");body.addView(row(button("Create a group",this::newGroup),button("Join group",this::startJoining)));
@@ -468,7 +473,7 @@ public final class MainActivity extends FragmentActivity {
         body.addView(primary("Open .enigma file",()->pickFile("decrypt")));
         note("Quicker: tap the .enigma file in WhatsApp, email or Files and choose Enigma.");
         body.addView(label("GOT A BLOCK OF TEXT INSTEAD?",10,GREEN));
-        message=editor("Paste the encrypted text (ENG4:…) here",true);body.addView(message,new LinearLayout.LayoutParams(-1,dp(110)));
+        message=editor("Paste the encrypted text (ENG5:…) here",true);body.addView(message,new LinearLayout.LayoutParams(-1,dp(110)));
         EditText pasted=message;body.addView(button("Open pasted text",()->openPasted(pasted.getText().toString())));
     }
     private void openPasted(String text){
@@ -605,7 +610,7 @@ public final class MainActivity extends FragmentActivity {
             {"5. Manual transfer","For a USB cable or any file copy. Recipient: Join group → By file: save my request, and copy it to the owner. Owner: Invite new recipient → By file: open their request → Invite, then save the invitation file and copy it back. Recipient: Join group → By file: open the owner's invitation. Compare the six-digit check code in person or on a call before tapping Join."},
             {"6. Send","Messages → Send → type a message or choose a file → choose the group → tick one or more people → Encrypt & share. Enigma makes one .enigma file only they can open; send it with any app or over USB. Send as text instead makes a block of text for a chat. Expiry and View once are optional. Each message uses a one-time key that is deleted after reading; Reduced protection means none were left, and they refill as people reply."},
             {"7. Receive","Tap the .enigma file in your messenger and choose Enigma, or Messages → Receive → Open .enigma file. Enigma finds the group, checks the sender and shows photos and text inside the app. A message opens once from its file; after that it is kept encrypted under Messages. Save to device asks for your passphrase; that copy is outside Enigma. Pasted text works too."},
-            {"8. Unlock and reset","Device → Security & unlock enables fingerprint unlock or changes the passphrase. Backgrounding locks Enigma. Device → Reset app & delete local data requires the passphrase and typed RESET; it deletes local keys/groups/history. There is no recovery."}
+            {"8. Unlock and reset","Unlocking takes your passphrase or fingerprint, then your 4-digit PIN. 5 wrong PINs, or the panic PIN (9999 until you change it), erase Enigma's keys and data at once. Device → Security & unlock enables fingerprint unlock and changes the passphrase, PIN or panic PIN. Backgrounding locks Enigma. Device → Reset app & delete local data requires the passphrase and typed RESET; it deletes local keys/groups/history. There is no recovery."}
         };
         for(String[] section:sections){steps.addView(label(section[0],17,GREEN));steps.addView(label(section[1],14,WHITE));}
         transientDialog=new AlertDialog.Builder(this).setTitle("How to use Enigma").setView(scroll).setPositiveButton("Got it",null).show();
@@ -618,7 +623,7 @@ public final class MainActivity extends FragmentActivity {
             .setView(confirm).setNegativeButton("Keep my data",null).setPositiveButton("Delete local app data",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             if(!confirm.getText().toString().equals("RESET")){confirm.setError("Type RESET exactly");return;}
-            dialog.dismiss();if(message!=null)message.setText("");clearResult();
+            dialog.dismiss();if(message!=null)message.setText("");clearResult();PinLock.wipe(this);
             try{ActivityManager manager=(ActivityManager)getSystemService(ACTIVITY_SERVICE);if(manager==null || !manager.clearApplicationUserData())error("Android could not reset the app. Use Settings → Apps → Enigma → Storage → Clear data.");}catch(Exception e){error(e.getMessage());}
         }));transientDialog=dialog;dialog.show();
     }
@@ -643,23 +648,101 @@ public final class MainActivity extends FragmentActivity {
     }
     private void lockScreen(){
         if(isDestroyed())return;body.removeAllViews();nav.removeAllViews();recipientActions.clear();output=null;message=null;progress.setVisibility(View.GONE);
-        boolean create=!passwordLock.configured();title(create?"Protect Enigma":"Unlock Enigma");note(create?"Use at least 12 characters. There is no password recovery.":"Enter your app passphrase to unlock groups and history.");
+        if(pendingSecret!=null){pinScreen();return;}
+        boolean create=!passwordLock.configured();title(create?"Protect Enigma":"Unlock Enigma");note(create?"Use at least 12 characters. There is no password recovery.":"Enter your app passphrase, or use biometrics. Your PIN is asked next.");
         EditText password=passwordEditor(create?"New passphrase":"App passphrase");body.addView(passwordField(password));EditText confirm=create?passwordEditor("Repeat passphrase"):null;if(confirm!=null)body.addView(passwordField(confirm));
+        EditText pin=create?pinEditor("4-digit PIN"):null,pinAgain=create?pinEditor("Repeat PIN"):null,panic=create?pinEditor("Panic PIN"):null;
+        if(create){note("Every unlock needs your passphrase or fingerprint and then this PIN. After "+PinBox.MAX_ATTEMPTS+" wrong PINs Enigma erases itself.");body.addView(pin);body.addView(pinAgain);panic.setText(PinBox.DEFAULT_PANIC);note("Panic PIN: entering it instead of your PIN erases Enigma at once. It starts as "+PinBox.DEFAULT_PANIC+"; change it to something only you know.");body.addView(panic);}
         body.addView(primary(create?"Protect my app":"Unlock",()->{
             char[] chars=password.getText().toString().toCharArray();if(create && (chars.length<12 || !password.getText().toString().equals(confirm.getText().toString()))){Arrays.fill(chars,'\0');password.setError("Use 12–128 characters and matching passphrases");return;}
-            long wait=getPreferences(MODE_PRIVATE).getLong("retryAfter",0)-System.currentTimeMillis();if(wait>0){Arrays.fill(chars,'\0');error("Try again in "+((wait+999)/1000)+" seconds");return;}password.setText("");if(confirm!=null)confirm.setText("");
-            unlockWork(()->{byte[] key=null;try{key=create?passwordLock.create(chars):passwordLock.unlock(chars);Vault opened=new Vault(this,key);cleanupCache();cleanupHistory(opened);opened.save();getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();return opened;}catch(Exception e){if(!create){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();}throw new SecurityException(create?"Could not protect the vault. Your existing data was retained.":"Could not unlock. Check your passphrase; damaged data or missing device keys also prevent unlocking.",e);}finally{Arrays.fill(chars,'\0');if(key!=null)Arrays.fill(key,(byte)0);}},this::openedVault);
+            String pinValue=create?pin.getText().toString():null,panicValue=create?panic.getText().toString():null;
+            if(create){String problem=pinProblem(pinValue,pinAgain.getText().toString(),panicValue);if(problem!=null){Arrays.fill(chars,'\0');pin.setError(problem);return;}}
+            long wait=getPreferences(MODE_PRIVATE).getLong("retryAfter",0)-System.currentTimeMillis();if(wait>0){Arrays.fill(chars,'\0');error("Try again in "+((wait+999)/1000)+" seconds");return;}password.setText("");if(confirm!=null)confirm.setText("");if(create){pin.setText("");pinAgain.setText("");panic.setText("");}
+            unlockWork(()->{byte[] key=null;boolean done=false;try{
+                if(create){key=passwordLock.create(chars);byte[] master=Protocol.random(32);try{pinLock.set(key,pinValue,panicValue,master);Vault opened=new Vault(this,master);cleanupCache();cleanupHistory(opened);opened.save();done=true;return new Object[]{opened,key};}finally{Arrays.fill(master,(byte)0);}}
+                key=passwordLock.unlock(chars);getPreferences(MODE_PRIVATE).edit().remove("failures").remove("retryAfter").apply();Object result=firstFactor(key);done=true;return result;
+            }catch(Exception e){if(!create){int n=Math.min(10,getPreferences(MODE_PRIVATE).getInt("failures",0)+1);getPreferences(MODE_PRIVATE).edit().putInt("failures",n).putLong("retryAfter",System.currentTimeMillis()+Math.min(60000,1000L*(1L<<n))).apply();}throw new SecurityException(create?"Could not protect the vault. Your existing data was retained.":"Could not unlock. Check your passphrase; damaged data or missing device keys also prevent unlocking.",e);}finally{Arrays.fill(chars,'\0');if(!done&&key!=null)Arrays.fill(key,(byte)0);}},this::afterFirstFactor);
         }));
         if(!create && passwordLock.biometricConfigured())body.addView(button("Unlock with biometrics",()->biometric(false)));
         note("Forgotten passphrase? There is no bypass. Android Settings can clear this app's data to start over; that permanently loses local keys and data.");
     }
+    private EditText pinEditor(String hint){EditText edit=editor(hint,false);edit.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);limit(edit,4);return edit;}
+    private static String pinProblem(String pin,String again,String panic){
+        if(!PinBox.valid(pin))return "Use exactly 4 digits";if(!pin.equals(again))return "PINs do not match";
+        if(!PinBox.valid(panic))return "The panic PIN is 4 digits";if(pin.equals(panic))return "Your PIN and panic PIN must differ";return null;
+    }
+    /**
+     * Worker thread, after the passphrase or biometrics released the first-factor secret: returns
+     * the secret when a PIN is needed next, or {vault, secret} for an installation that has no PIN
+     * yet (earlier versions; the PIN is then set before anything else).
+     */
+    private Object firstFactor(byte[] secret)throws Exception{
+        boolean stale=false;
+        if(pinLock.configured()){if(pinLock.state().belongsTo(secret))return secret;stale=true;}
+        Vault opened=new Vault(this,secret);if(stale)pinLock.delete(); // PIN setup was interrupted before the passphrase changed
+        cleanupCache();cleanupHistory(opened);opened.save();return new Object[]{opened,secret};
+    }
+    private void afterFirstFactor(Object result)throws Exception{
+        if(result instanceof byte[]){wipeSecrets();pendingSecret=(byte[])result;pinScreen();return;}
+        Object[] pair=(Object[])result;wipeSecrets();unlockSecret=(byte[])pair[1];openedVault((Vault)pair[0]);
+    }
+    private void wipeSecrets(){if(pendingSecret!=null)Arrays.fill(pendingSecret,(byte)0);if(unlockSecret!=null)Arrays.fill(unlockSecret,(byte)0);pendingSecret=null;unlockSecret=null;}
+    private void pinScreen(){
+        if(isDestroyed())return;body.removeAllViews();nav.removeAllViews();
+        title("Enter your PIN");int left=PinBox.MAX_ATTEMPTS;try{left=pinLock.state().remaining();}catch(Exception ignored){}
+        note(left<PinBox.MAX_ATTEMPTS?left+(left==1?" attempt":" attempts")+" left before Enigma erases itself.":"Second step: your 4-digit PIN.");
+        EditText pin=pinEditor("PIN");body.addView(pin);
+        body.addView(primary("Unlock",()->{
+            String value=pin.getText().toString();pin.setText("");if(!PinBox.valid(value)){pin.setError("Enter your 4-digit PIN");return;}
+            byte[] secret=pendingSecret;if(secret==null){lockScreen();return;}byte[] copy=secret.clone();
+            unlockWork(()->{byte[] master=null;try{master=pinLock.unlock(copy,value);Vault opened=new Vault(this,master);cleanupCache();cleanupHistory(opened);opened.save();return opened;}
+                catch(PinLock.Wiped w){return "wiped";}finally{Arrays.fill(copy,(byte)0);if(master!=null)Arrays.fill(master,(byte)0);}},
+                result->{if("wiped".equals(result)){erased();return;}byte[] s=pendingSecret;pendingSecret=null;unlockSecret=s;openedVault((Vault)result);});
+        }));
+        body.addView(button("Cancel",()->{wipeSecrets();lockScreen();}));
+    }
+    /** After the panic PIN or too many wrong PINs: keys and files are already gone; Android clears the rest. */
+    private void erased(){
+        wipeSecrets();vault=null;selected=null;
+        try{ActivityManager manager=(ActivityManager)getSystemService(ACTIVITY_SERVICE);if(manager!=null&&manager.clearApplicationUserData())return;}catch(Exception ignored){}
+        finishAndRemoveTask();
+    }
+    /** Installations from before the PIN (decision 12): set a PIN before anything else. */
+    private void pinSetup(){
+        title("Add an unlock PIN");
+        note("Enigma now needs two steps to unlock: your passphrase or fingerprint, then a 4-digit PIN. After "+PinBox.MAX_ATTEMPTS+" wrong PINs Enigma erases itself.");
+        EditText pass=passwordEditor("App passphrase");body.addView(passwordField(pass));EditText pin=pinEditor("New 4-digit PIN"),again=pinEditor("Repeat PIN"),panic=pinEditor("Panic PIN");
+        body.addView(pin);body.addView(again);panic.setText(PinBox.DEFAULT_PANIC);note("Panic PIN: entering it instead of your PIN erases Enigma at once. It starts as "+PinBox.DEFAULT_PANIC+"; change it to something only you know.");body.addView(panic);
+        body.addView(primary("Save PIN",()->{
+            String problem=pinProblem(pin.getText().toString(),again.getText().toString(),panic.getText().toString());if(problem!=null){pin.setError(problem);return;}
+            char[] chars=pass.getText().toString().toCharArray();String pinValue=pin.getText().toString(),panicValue=panic.getText().toString();pass.setText("");pin.setText("");again.setText("");
+            work(()->{byte[] current=null,next=Protocol.random(32),master=vault.copyMaster();boolean done=false;try{
+                current=passwordLock.unlock(chars);if(!java.security.MessageDigest.isEqual(current,unlockSecret))throw new SecurityException("Incorrect passphrase");
+                pinLock.set(next,pinValue,panicValue,master);
+                try{passwordLock.replace(chars,next);}catch(Exception e){pinLock.delete();throw e;}
+                done=true;return next;
+            }catch(Exception e){throw new SecurityException("PIN not saved. Check your passphrase.",e);}finally{Arrays.fill(chars,'\0');Arrays.fill(master,(byte)0);if(current!=null)Arrays.fill(current,(byte)0);if(!done)Arrays.fill(next,(byte)0);}},
+                next->{if(unlockSecret!=null)Arrays.fill(unlockSecret,(byte)0);unlockSecret=next;render();Toast.makeText(this,"PIN saved. Biometric unlock was turned off; turn it on again in Device → Security & unlock.",Toast.LENGTH_LONG).show();});
+        }));
+        body.addView(button("Lock Enigma",this::lockNow));
+    }
+    private void changePin(){reauth("Confirm PIN change",()->{
+        LinearLayout view=column();EditText pin=pinEditor("New 4-digit PIN"),again=pinEditor("Repeat PIN"),panic=pinEditor("Panic PIN");view.addView(pin);view.addView(again);view.addView(panic);
+        try{panic.setText(pinLock.state().panic);}catch(Exception ignored){}
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Change PIN or panic PIN").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            String problem=pinProblem(pin.getText().toString(),again.getText().toString(),panic.getText().toString());if(problem!=null){pin.setError(problem);return;}
+            String pinValue=pin.getText().toString(),panicValue=panic.getText().toString();dialog.dismiss();
+            work(()->{byte[] master=vault.copyMaster();try{pinLock.set(unlockSecret,pinValue,panicValue,master);return true;}finally{Arrays.fill(master,(byte)0);}},ok->{render();Toast.makeText(this,"PIN saved",Toast.LENGTH_LONG).show();});
+        }));transientDialog=dialog;dialog.show();
+    });}
     private void openedVault(Vault opened)throws Exception{
         if(!foreground){opened.close();lockScreen();return;}vault=opened;sessionLocked=false;ownId=opened.identity==null?null:opened.identity.fingerprint();broken=false;startMotion();
-        if(!opened.groups.isEmpty())selected=opened.groups.get(0);if(group(restoredGroup)!=null)selected=group(restoredGroup);chooseDefaultRecipient();render();if(opened.setupCompleted)handleIncoming();
+        if(!opened.groups.isEmpty())selected=opened.groups.get(0);if(group(restoredGroup)!=null)selected=group(restoredGroup);chooseDefaultRecipient();render();if(opened.setupCompleted&&pinLock.configured())handleIncoming();
     }
     private void lockNow(){
         stopNearby();
-        session++;sessionLocked=true;handoff=false;biometricAttempt++;if(biometricPrompt!=null){biometricPrompt.cancelAuthentication();biometricPrompt=null;}if(vault==null){if(transientDialog!=null)transientDialog.dismiss();setEnabled(root,true);lockScreen();return;}Vault previous=vault;restoredGroup=selected==null?null:selected.id;vault=null;selected=null;recipients.clear();stopMotion();
+        session++;sessionLocked=true;handoff=false;biometricAttempt++;wipeSecrets();if(biometricPrompt!=null){biometricPrompt.cancelAuthentication();biometricPrompt=null;}if(vault==null){if(transientDialog!=null)transientDialog.dismiss();setEnabled(root,true);lockScreen();return;}Vault previous=vault;restoredGroup=selected==null?null:selected.id;vault=null;selected=null;recipients.clear();stopMotion();
         if(transientDialog!=null)transientDialog.dismiss();transientDialog=null;if(message!=null)message.setText("");clearResult();sendDraft="";sendUri=null;viewRecord=null;viewTitle=null;viewText=null;if(viewImage!=null){viewImage.recycle();viewImage=null;}if("viewer".equals(page))page="chat";closeVerified();encryptedFile=null;
         worker.execute(previous::close);if(!isDestroyed()){setEnabled(root,true);lockScreen();}
     }
@@ -679,7 +762,7 @@ public final class MainActivity extends FragmentActivity {
     }
     private void changePassword(){reauth("Confirm current passphrase",()->{
         LinearLayout view=column();EditText next=passwordEditor("New passphrase"),again=passwordEditor("Repeat new passphrase");view.addView(passwordField(next));view.addView(passwordField(again));
-        transientDialog=new AlertDialog.Builder(this).setTitle("Change app passphrase").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Change",(d,w)->{char[] chars=next.getText().toString().toCharArray();boolean same=next.getText().toString().equals(again.getText().toString());next.setText("");again.setText("");if(chars.length<12 || !same){Arrays.fill(chars,'\0');error("Use matching passphrases of 12–128 characters");return;}work(()->{byte[] key=vault.copyMaster();try{passwordLock.replace(chars,key);return true;}finally{Arrays.fill(chars,'\0');Arrays.fill(key,(byte)0);}},ok->{render();Toast.makeText(this,"Passphrase changed; biometric unlock disabled",Toast.LENGTH_LONG).show();});}).show();
+        transientDialog=new AlertDialog.Builder(this).setTitle("Change app passphrase").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Change",(d,w)->{char[] chars=next.getText().toString().toCharArray();boolean same=next.getText().toString().equals(again.getText().toString());next.setText("");again.setText("");if(chars.length<12 || !same){Arrays.fill(chars,'\0');error("Use matching passphrases of 12–128 characters");return;}work(()->{byte[] key=unlockSecret.clone();try{passwordLock.replace(chars,key);return true;}finally{Arrays.fill(chars,'\0');Arrays.fill(key,(byte)0);}},ok->{render();Toast.makeText(this,"Passphrase changed; biometric unlock disabled",Toast.LENGTH_LONG).show();});}).show();
     });}
     private void biometric(boolean enable){
         if(busy)return;
@@ -691,7 +774,7 @@ public final class MainActivity extends FragmentActivity {
             biometricPrompt=new BiometricPrompt(this,ContextCompat.getMainExecutor(this),new BiometricPrompt.AuthenticationCallback(){
                 @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result){
                     if(generation!=session||attempt!=biometricAttempt||result.getCryptoObject()==null)return;biometricPrompt=null;
-                    runWork(()->{byte[] key=enable?vault.copyMaster():passwordLock.finishBiometricUnlock(result.getCryptoObject().getCipher());try{if(enable){passwordLock.finishBiometricEnable(result.getCryptoObject().getCipher(),key);return null;}Vault opened=new Vault(MainActivity.this,key);cleanupCache();cleanupHistory(opened);opened.save();return opened;}finally{Arrays.fill(key,(byte)0);}},v->{if(enable){render();Toast.makeText(MainActivity.this,"Biometric unlock enabled",Toast.LENGTH_LONG).show();}else openedVault(v);},!enable);
+                    runWork(()->{byte[] key=enable?unlockSecret.clone():passwordLock.finishBiometricUnlock(result.getCryptoObject().getCipher());boolean kept=false;try{if(enable){passwordLock.finishBiometricEnable(result.getCryptoObject().getCipher(),key);return null;}Object next=firstFactor(key);kept=true;return next;}finally{if(!kept)Arrays.fill(key,(byte)0);}},v->{if(enable){render();Toast.makeText(MainActivity.this,"Biometric unlock enabled",Toast.LENGTH_LONG).show();}else afterFirstFactor(v);},!enable);
                 }
                 @Override public void onAuthenticationError(int code,CharSequence reason){if(attempt!=biometricAttempt)return;biometricPrompt=null;if(code!=BiometricPrompt.ERROR_USER_CANCELED&&code!=BiometricPrompt.ERROR_CANCELED&&code!=BiometricPrompt.ERROR_NEGATIVE_BUTTON)error(reason.toString());}
             });

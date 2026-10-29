@@ -1,8 +1,8 @@
 # Enigma system design
 
-Version: 0.7.0 development build (branch feature/0.7.0-messages). Updated: 29 October 2026.
+Version: 0.7.0 development build (branch feature/0.7.0-messages). Updated: 30 October 2026.
 
-> **0.7.0 status:** the app now uses the design in "0.7.0 message security" below. Sections that still describe RSA identities, QKD3/file-v3 packets, QKJ1/QKG2/QKA1 joining or ciphertext-only history describe 0.6.0. Where they conflict, the 0.7.0 section is authoritative. Rewriting those sections in full is still to do before merging to main.
+> **0.7.0 status:** the app now uses the design in "0.7.0 message security" below. Sections that still describe RSA identities, QKD3/file-v3 packets, QKJ1/QKG2/QKA1 joining, ciphertext-only history or biometrics as an alternative to the passphrase describe 0.6.0. Where they conflict, the 0.7.0 section is authoritative. Rewriting those sections in full is still to do before merging to main.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned improvements are explicitly separated below.
 
@@ -54,7 +54,7 @@ flowchart LR
 - Vault master key: random 32 bytes. It encrypts vault format 2 with AES-256-GCM, fresh 12-byte nonce, 128-bit tag and AAD Enigma-vault-v2.
 - App passphrase: 12–128 characters. Argon2id v1.3 derives a 32-byte envelope key with 16 random salt bytes, 64 MiB memory, three iterations and four lanes. Bouncy Castle 1.86 provides the low-level implementation; its JCA provider is not installed globally.
 - Password envelope: AES-GCM protects the random master key. The device Keystore encrypts that complete envelope again. Fixed framing and bounded sizes prevent attacker-selected KDF resource inflation. Neither a UI success flag nor a stored password hash opens the vault.
-- Optional biometric key: separate Keystore AES key, requires biometric authentication for each cryptographic operation and invalidates on changed biometric enrollment where supported. It wraps the same master key through AndroidX BiometricPrompt/CryptoObject, requesting BIOMETRIC_STRONG on supported API26+ devices. GCM AAD is supplied after authentication, immediately before finalization. Cancellation/stale callbacks cannot open a session. This is an explicitly authorized alternate unlocking route, not a second required factor. Password change disables this route.
+- Optional biometric key: separate Keystore AES key, requires biometric authentication for each cryptographic operation and invalidates on changed biometric enrollment where supported. It wraps the same master key through AndroidX BiometricPrompt/CryptoObject, requesting BIOMETRIC_STRONG on supported API26+ devices. GCM AAD is supplied after authentication, immediately before finalization. Cancellation/stale callbacks cannot open a session. Since 0.7.0 (decision 12) it is an alternative first step only: the PIN is always required as well. Password change disables this route.
 - Group secret: independent 32 bytes per group, HKDF from fresh OS randomness with the live camera digest as additional salt input. OS randomness is the security foundation; camera input is not a measurable entropy guarantee. Group IDs are UUIDs.
 
 Keys/plaintext exist in process memory during use. Byte arrays are cleared where practical, but Java cannot guarantee complete erasure. The RSA identity and device password-box key are not themselves configured for per-operation user authentication; a compromised executing app can potentially use these Keystore keys. Password/biometric protection does not promise safety on a fully compromised unlocked endpoint.
@@ -63,11 +63,11 @@ Keys/plaintext exist in process memory during use. Byte arrays are cleared where
 
 On first use the user chooses and repeats an app passphrase before device setup. Password entry is hidden by default, with an explicit visibility toggle that preserves the cursor and typed value. Existing development data may be opened during the initial password setup and rewritten with the random master key. Legacy data compatibility is not a supported release commitment.
 
-Opening Enigma requires the passphrase or an explicitly enabled biometric route. Before successful decryption no groups, history or group secrets are loaded. Wrong-password attempts incur a persistent increasing UI delay capped at 60 seconds; this is not protection against offline guessing or a modified/rooted client. Argon2 is the computational barrier for copied password envelopes.
+Opening Enigma requires the passphrase or an explicitly enabled biometric route, and since 0.7.0 the 4-digit PIN as well (decision 12). Before successful decryption no groups, history or group secrets are loaded. Wrong-password attempts incur a persistent increasing UI delay capped at 60 seconds; this is not protection against offline guessing or a modified/rooted client. Argon2 is the computational barrier for copied password envelopes.
 
 Leaving Enigma locks it, clears the visible data and queues disposal of loaded secrets. Screen-off always locks. Camera setup and Android document pickers receive a controlled session allowance of at most two minutes; scanning the joining code allows five minutes and the Wi-Fi connection prompt 90 seconds. Screen-off still locks immediately; they are not general background-unlock permission. A generation counter rejects asynchronous results from an obsolete session. Streaming exports check the session while writing and request deletion of failed/partial destinations. External storage providers may retain copies or fail deletion.
 
-Fresh passphrase authentication is required before readable-file export, reset, password change and biometric configuration. Biometric unlock does not replace the passphrase for these actions. There is no password recovery. Android Settings can clear data for a fresh start, losing the local identity/data. No automatic wiping follows failed passwords.
+Fresh passphrase authentication is required before readable-file export, reset, password change and biometric configuration. Biometric unlock does not replace the passphrase for these actions. There is no password recovery. Android Settings can clear data for a fresh start, losing the local identity/data. No automatic wiping follows failed passwords; since 0.7.0, five wrong PINs or the panic PIN erase the app (decision 12).
 
 ## Joining: nearby (single QR or NFC tap, then Wi-Fi) and manual files
 
@@ -178,12 +178,13 @@ Agreed with the owner on 29 October 2026 and implemented on branch feature/0.7.0
 
 The app uses the following:
 - `Entropy`, fed by camera digests at setup and group creation and by accelerometer and gyroscope events while unlocked.
-- `Identity` and `KeyPools`, stored in the passphrase vault (decision 7: vault only; vault format version 2).
-- `JoinProtocol` (QKJ3/QKG3/QKA3) for nearby and manual joining. LocalJoinWire limits are raised for the key pools.
-- `SealedProtocol` (ENG4) for Send and Receive:
+- `Identity` and `KeyPools`, stored in the passphrase vault (decision 7: vault only; vault format version 3).
+- Hybrid algorithms (decision 11, `PostQuantum`): every identity has Ed25519 + ML-DSA-65 signing keys and every backup or one-time key is an X25519 + ML-KEM-768 pair.
+- `JoinProtocol` (QKJ4/QKG4/QKA4) for nearby and manual joining. LocalJoinWire limits are raised for the larger keys and pools.
+- `SealedProtocol` (ENG5) for Send and Receive:
   - Several recipients can be ticked.
   - View once is available.
-  - Send as text carries the same package as `ENG4:` base64.
+  - Send as text carries the same package as `ENG5:` base64.
   - A newer roster carried in a message is adopted on receipt.
 
 History:
@@ -191,8 +192,15 @@ History:
 - Outgoing packages are kept under files/packages for Share again.
 - View-once content is never stored.
 
-Upgrading from 0.6.0:
-- A version-1 (0.6.0) vault is detected and kept unchanged; history clean-up is skipped for it.
+Unlocking (decision 12, `PinBox`/`PinLock`):
+- Passphrase or biometrics, then a 4-digit PIN. The first step releases a 32-byte secret; the vault master key is AES-GCM encrypted under HKDF(that secret, Argon2id(PIN)). Neither step alone opens the vault.
+- The PIN state (attempt count, panic PIN, encrypted master key) is stored in files/pin.qkp under the device Keystore key. Each attempt is counted on disk before the PIN is checked; a correct PIN resets the count.
+- After 5 wrong PINs, or when the panic PIN is entered, Enigma deletes all its Keystore keys, then its files, cache and preferences, and asks Android to clear its data. Android does not let an app uninstall itself.
+- The panic PIN starts as 9999 and must differ from the PIN. Setup and Security & unlock show it, and Security & unlock warns while it is still 9999.
+- Installations from before the PIN are asked to set one, with their passphrase, before anything else; this also replaces the first-step secret and turns biometric unlock off until it is enabled again.
+
+Upgrading from 0.6.0 or an early 0.7.0 test build:
+- A version-1 (0.6.0) or version-2 (early 0.7.0 without ML-KEM/ML-DSA) vault is detected and kept unchanged; history clean-up is skipped for it.
 - The app shows "New keys needed", and only an explicit, passphrase-confirmed Start fresh replaces it.
 
 Removed: RSA identities and Keystore identity alias use, FileProtocol, DirectProtocol, PairingProtocol, GroupKey and legacy QKM1.
@@ -202,7 +210,7 @@ Design adjustment: old backup private keys are kept for 365 days, because a rost
 Not yet done:
 - reserve replenishment;
 - an explicit Send group update button, a second admin and rekey on removal (decisions 1-3);
-- chunked streaming for files (ENG4 holds content in memory, up to 50 MiB);
+- chunked streaming for files (ENG5 holds content in memory, up to 50 MiB);
 - full rewrite of the 0.6.0 sections of this document;
 - physical-phone tests.
 
@@ -235,10 +243,10 @@ Non-goal: compatibility with OpenPGP or GnuPG.
 
 ### Keys per member
 
-- **Identity key**: Ed25519, long-lived, exchanged in person when joining. Signs everything else.
+- **Identity key**: Ed25519 + ML-DSA-65, long-lived, exchanged in person when joining. Packets carry both signatures and both must verify (decision 11). Backup and one-time keys carry an Ed25519 signature only; they always travel inside a packet with the owner's hybrid signature.
 - **Identity agreement key**: X25519, long-lived, signed by the identity key (X3DH's IK).
-- **Backup key**: X25519, medium-term, signed (X3DH's signed prekey). Used when no one-time key is available, and for the first message to a contact before their pool arrives. It is replaced periodically by sending a new signed one in messages. The old private half is kept only for a grace period.
-- **One-time keys**: X25519, numbered and signed by the identity key, because they travel through untrusted messengers. Each member keeps a separate pool *per contact* (default 100), so two senders never use the same key. Each key is used for exactly one message; its private half is deleted after that message is authenticated and decrypted.
+- **Backup key**: X25519 + ML-KEM-768, medium-term, signed (X3DH's signed prekey). Used when no one-time key is available, and for the first message to a contact before their pool arrives. It is replaced periodically by sending a new signed one in messages. The old private half is kept only for a grace period.
+- **One-time keys**: X25519 + ML-KEM-768, numbered and signed by the identity key, because they travel through untrusted messengers. Each member keeps a separate pool *per contact* (default 100), so two senders never use the same key. Each key is used for exactly one message; its private half is deleted after that message is authenticated and decrypted.
 - **Owner reserve**: on joining, each member also gives the owner a signed batch of public one-time keys "for future members". The owner allocates each reserve key to exactly one later joiner. The reserve is public keys only, so the owner cannot read anything with it.
 - **Group secret**: unchanged (32 bytes per group). It is mixed into every message key, so a valid one-time key without group membership cannot decrypt.
 - **Randomness**: an HMAC-DRBG seeded by HKDF from OS randomness plus the live camera digest and motion-sensor readings (decision 10). It is reseeded with OS randomness for every generation, with motion-sensor readings while the app is open, and with camera input whenever the camera is used, so refills need no new photo. As today, OS randomness is the security foundation; camera input is not a measured entropy guarantee.
@@ -250,8 +258,8 @@ Non-goal: compatibility with OpenPGP or GnuPG.
 3. For each recipient:
    - take an unused one-time key from that recipient's pool for this sender (or their backup key, see below);
    - make a fresh ephemeral X25519 key;
-   - run X3DH;
-   - derive a wrapping key with HKDF using the group secret as salt;
+   - run X3DH, and encapsulate a secret to the same one-time key's ML-KEM half (the backup key's when there is no one-time key);
+   - derive a wrapping key with HKDF over all X3DH results and the ML-KEM secret, using the group secret as salt (like Signal's PQXDH);
    - wrap the content key.
 4. The outer header carries only opaque key IDs and ephemeral public keys, not member fingerprints. Each recipient finds its entry by its own key IDs.
 5. Inside the encryption:
@@ -296,7 +304,10 @@ A replay of a one-time-key message fails because the key is gone. Backup-key mes
 - Forward secrecy depends on deleting keys. Flash storage and Java memory cannot guarantee erasure.
 - No post-compromise recovery: a thief who unlocks the device can impersonate its owner until that identity is revoked and the member rejoins.
 - Backup-key messages have weaker forward secrecy until that backup key is replaced.
-- Stored plaintext history is exactly as safe as the vault passphrase.
+- Stored plaintext history is exactly as safe as the vault unlock (passphrase or biometrics, plus PIN).
+- The hybrid algorithms protect against one algorithm family failing. They do not protect against bugs in Enigma, Bouncy Castle or Android, or against a compromised phone.
+- The wrong-PIN count can be rolled back by someone who controls the phone at root level (by restoring an older pin.qkp). They still need the first unlock step for every try.
+- AES-256-GCM is the only content cipher. It is not considered at risk from quantum computers, so no second symmetric layer was added.
 - The external messenger still sees who sends files to whom, when, and how large they are.
 
 ### Decisions (agreed with the owner, 29 October 2026)
@@ -308,9 +319,11 @@ A replay of a one-time-key message fails because the key is gone. Backup-key mes
 5. **Camera reseeding**: whenever the camera is already in use, for example when joining. There is no extra prompt.
 10. **Motion sensors as a second extra source**: the generator also mixes in accelerometer and gyroscope readings (values plus timing) gathered while Enigma is open and unlocked. These sensors need no Android permission, and they still contribute when the camera is broken, covered or dark. The microphone was considered and rejected: it adds little beyond the camera and would need audio-recording permission. As with the camera, OS randomness remains the security foundation; sensor input is not a measured entropy guarantee.
 6. **Format change**: all members rejoin in person for 0.7.0.
-7. **Key storage**: identity keys live in the Android Keystore where the device supports Ed25519/X25519, otherwise in the passphrase-protected vault. The app shows which one is used.
+7. **Key storage**: vault only (owner's choice, 29 October). The Keystore generates keys internally, so camera and motion randomness could not be mixed into them.
 8. **Defaults**: 100 one-time keys per contact, 20 owner-reserve keys per member, up to 10 refill keys per message, and a new backup key every 30 days.
 9. **Empty pool**: send using the backup key with a "reduced protection" mark rather than refuse.
+11. **Two algorithm families** (30 October 2026): to guard against a break in one algorithm, every key agreement combines X25519 with ML-KEM-768 (FIPS 203) and every packet signature combines Ed25519 with ML-DSA-65 (FIPS 204). Reading a message needs both agreement algorithms broken (and the group secret); forging one needs both signature algorithms broken. RSA was considered and rejected: it fails to the same quantum attack as X25519 and its key generation is too slow for one-time key pools. Costs: an ML-KEM public key is 1,184 bytes, each recipient entry gains 1,088 bytes, each signature is 3,373 bytes and each identity 2,016 bytes. Packet limits were raised to match.
+12. **Two-step unlock with wipe** (30 October 2026): passphrase or biometrics, then a 4-digit PIN. Five wrong PINs, or the panic PIN (default 9999, changeable), erase Enigma's keys and data. The PIN is part of the vault key, so a copied file cannot be PIN-guessed without the first step.
 
 ## Verification and future work
 
@@ -320,6 +333,7 @@ Planned work: per-message forward secrecy, separate signing/agreement identities
 
 ## Change log
 
+- 0.7.0 / 30 October 2026 (branch): hybrid algorithms (X25519 + ML-KEM-768, Ed25519 + ML-DSA-65; ENG5, QKJ4/QKG4/QKA4, vault format 3) and two-step unlock (passphrase or biometrics, then a PIN; wipe after 5 wrong PINs or on the panic PIN).
 - 0.7.0 / 29 October 2026 (branch): Ed25519/X25519 identities in the vault, camera and motion entropy, X3DH one-time keys with per-contact pools and owner introductions, multiple recipients, view once, readable history stored encrypted in the vault, 0.6.0 vault upgrade screen; RSA formats removed.
 - Proposal / 29 October 2026: 0.7.0 message-security design recorded for owner sign-off (X25519/Ed25519, X3DH-style one-time keys with per-contact pools and owner reserve, multiple recipients, plaintext history in the vault, explicit owner group updates). Not implemented; the build remains 0.6.0.
 - 0.6.0 / 28 October 2026: NFC joining fix (recipient reader mode re-armed after the QR scanner or any pause; owner polling disabled on Android 15+ while serving) after "Empty tag" was seen in phone testing; joining menus rebuilt as buttons whose names match the on-screen instructions; messenger-style Messages tab with conversations, Send (message or file → group → person) and Receive; typed messages sent as .enigma files by default with text packets as the alternative; received photos/text open in an in-memory viewer with Save to device as a separate step; Enigma accepts .enigma files and text opened or shared from other apps; Home tab removed.

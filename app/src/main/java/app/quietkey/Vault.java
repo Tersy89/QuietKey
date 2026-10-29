@@ -16,8 +16,9 @@ import javax.crypto.spec.GCMParameterSpec;
  * At-rest vault: JSON encrypted under the passphrase-derived master key (whose envelope is also
  * wrapped by a non-exportable Keystore AES key). Since 0.7.0 it holds the Ed25519/X25519 identity
  * and key pools (decision 7: vault only, so camera/motion randomness is mixed into every key).
- * A 0.6.0 vault (version 1, RSA) is kept untouched as {@link #legacy} until the owner chooses
- * Start fresh; it is never silently erased.
+ * Version 3 holds hybrid (Ed25519/ML-DSA, X25519/ML-KEM) keys. An older vault (version 1: 0.6.0
+ * RSA; version 2: early 0.7.0 test builds without ML-KEM/ML-DSA) is kept untouched as
+ * {@link #legacy} until the owner chooses Start fresh; it is never silently erased.
  */
 public final class Vault implements AutoCloseable {
     private static final String STORAGE = "quietkey.vault.v1";
@@ -74,9 +75,9 @@ public final class Vault implements AutoCloseable {
         byte[] clear = cipher.doFinal(Arrays.copyOfRange(bytes, 13, bytes.length));
         JSONObject root;
         try { root = new JSONObject(new String(clear, StandardCharsets.UTF_8)); } finally { Arrays.fill(clear, (byte)0); }
-        int version=root.getInt("version");if (version != 1 && version != 2) throw new SecurityException("Unsupported vault version");
+        int version=root.getInt("version");if (version < 1 || version > 3) throw new SecurityException("Unsupported vault version");
         deviceName=root.optString("deviceName","This device");
-        if(version==1){legacy=true;legacyRoot=root;return;}
+        if(version<3){legacy=true;legacyRoot=root;return;}
         if(root.has("identity")){byte[] id=Protocol.un64(root.getString("identity"));try{identity=Identity.restore(id);}finally{Arrays.fill(id,(byte)0);}}
         if(root.has("keyPools"))pools=KeyPools.decode(Protocol.un64(root.getString("keyPools")));
         setupCompleted=root.optBoolean("setupCompleted",false);
@@ -86,7 +87,7 @@ public final class Vault implements AutoCloseable {
         JSONArray used=root.optJSONArray("pairingUsed");if(used!=null){if(used.length()>10000)throw new SecurityException("Joining history full");for(int i=0;i<used.length();i++)pairingUsed.add(used.getString(i));}
         JSONObject pending=root.optJSONObject("pendingInvites");if(pending!=null){if(pending.length()>10000)throw new SecurityException("Too many invitations");Iterator<String> it=pending.keys();while(it.hasNext()){String id=it.next();pendingInvites.put(id,pending.getString(id));}}
         JSONObject invitations=root.optJSONObject("invitationCache");
-        if(invitations!=null){if(invitations.length()>JoiningFlow.MAX_PENDING)throw new SecurityException("Too many saved invitations");Iterator<String> ids=invitations.keys();while(ids.hasNext()){String id=ids.next();JSONObject item=invitations.getJSONObject(id);String request=item.getString("request"),packet=item.getString("packet");if(request.length()>1600||packet.length()>30000)throw new SecurityException("Invalid saved invitation");invitationCache.put(id,new JoiningFlow.Invitation(request,item.getString("group"),item.getString("member"),packet,item.getLong("expires"),item.getLong("revision")));}}
+        if(invitations!=null){if(invitations.length()>JoiningFlow.MAX_PENDING)throw new SecurityException("Too many saved invitations");Iterator<String> ids=invitations.keys();while(ids.hasNext()){String id=ids.next();JSONObject item=invitations.getJSONObject(id);String request=item.getString("request"),packet=item.getString("packet");if(request.length()>JoinProtocol.MAX_REQUEST||packet.length()>JoinProtocol.MAX_INVITATION)throw new SecurityException("Invalid saved invitation");invitationCache.put(id,new JoiningFlow.Invitation(request,item.getString("group"),item.getString("member"),packet,item.getLong("expires"),item.getLong("revision")));}}
         JSONArray list = root.getJSONArray("groups");
         if (list.length() > 30) throw new SecurityException("Too many groups");
         HashSet<String> ids = new HashSet<>();
@@ -125,7 +126,7 @@ public final class Vault implements AutoCloseable {
             item.put("memberNames",names);
             item.put("rosterRevision",g.rosterRevision);item.put("roster",g.roster);item.put("blocked",new JSONArray(new ArrayList<>(g.blocked)));item.put("memberStatus",new JSONObject(g.memberStatus));
         }
-        JSONObject root = new JSONObject(); root.put("version",2); root.put("groups",list);
+        JSONObject root = new JSONObject(); root.put("version",3); root.put("groups",list);
         if(identity!=null){byte[] id=identity.encodePrivate();try{root.put("identity",Protocol.b64(id));}finally{Arrays.fill(id,(byte)0);}}
         root.put("keyPools",Protocol.b64(pools.encode()));
         root.put("deviceName",deviceName); root.put("setupCompleted",setupCompleted);
