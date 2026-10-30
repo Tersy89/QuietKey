@@ -2,8 +2,13 @@ Documentation update for 1.0.0 - 30 October 2026
 
 README.md, SECURITY.md and SYSTEM_DESIGN.md were rewritten to describe only the 1.0.0 design (hybrid
 keys, one-time keys, PIN and panic PIN, ENG5, QKJ4/QKG4/QKA4); 0.6.0 RSA-era text was removed from
-them. docs/user-guide.html was added. Text only: no code, build or test was run for this change, and
-the documents were checked against the code by reading it, not by new tests. Not an independent audit.
+them. docs/user-guide.html was added, and docs/security.html (the illustrated security overview,
+updated to 1.0.0). SECURITY.md and the user guide gained its layer, key and attacker tables.
+ScreenshotTest now also captures 10-pin (PIN screen with the in-app number pad) and 11-security.
+Executed: gradlew assembleDebug assembleDebugAndroidTest: success. ScreenshotTest on the disposable
+EnigmaShots emulator (API 35) after pm clear: OK (1 test); all 11 screenshots in docs/screenshots
+were refreshed from that run (demo data only). The documents were otherwise checked against the code
+by reading it, not by new tests. Not an independent audit.
 
 ----------------------------------------------------------------------------------------------
 
