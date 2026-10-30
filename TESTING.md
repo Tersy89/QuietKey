@@ -37,7 +37,11 @@ Use disposable development data. To retain an installation, install over it and 
 
 `PinLockTest` (instrumentation, opt-in `enigmaUiTest=true`, disposable emulator only) checks wrong-PIN counting, the wipe after the fifth wrong PIN and the panic-PIN wipe. Wiping deletes every Keystore key of the app; never run it on a phone.
 
-## 0.7.0 - priority phone checks (not yet run)
+## 1.0.0 - owner phone results (30 October 2026) and remaining checks
+
+Run by the owner on two physical phones with the versionCode 12 build: joining between the two phones, sending a JPEG, opening an older .enigma file made by the same phone under different keys (refused), and the panic PIN (erased Enigma). Not run by the owner: fingerprint + PIN. The 1.0.0 build changes only the PIN entry (in-app number pad) and the error text for unreadable files; it still needs a quick phone check that the number pad types into the PIN, repeat PIN and panic PIN fields and that the phone keyboard no longer appears for them.
+
+## 0.7.0 - priority phone checks
 
 1. Install over 0.6.0 (or the earlier 0.7.0 test APK). After the passphrase, the app asks for a new PIN and panic PIN; then it shows "New keys needed" and keeps the old data. Start fresh asks for the passphrase and confirmation, then runs camera setup.
 1a. Lock and unlock: passphrase, then PIN. Enable biometric unlock again (setting the PIN turned it off); then fingerprint, then PIN. A wrong PIN shows the attempts left; a correct PIN resets the count.

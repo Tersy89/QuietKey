@@ -654,7 +654,7 @@ public final class MainActivity extends FragmentActivity {
         boolean create=!passwordLock.configured();title(create?"Protect Enigma":"Unlock Enigma");note(create?"Use at least 12 characters. There is no password recovery.":"Enter your app passphrase, or use biometrics. Your PIN is asked next.");
         EditText password=passwordEditor(create?"New passphrase":"App passphrase");body.addView(passwordField(password));EditText confirm=create?passwordEditor("Repeat passphrase"):null;if(confirm!=null)body.addView(passwordField(confirm));
         EditText pin=create?pinEditor("4-digit PIN"):null,pinAgain=create?pinEditor("Repeat PIN"):null,panic=create?pinEditor("Panic PIN"):null;
-        if(create){note("Every unlock needs your passphrase or fingerprint and then this PIN. After "+PinBox.MAX_ATTEMPTS+" wrong PINs Enigma erases itself.");body.addView(pin);body.addView(pinAgain);panic.setText(PinBox.DEFAULT_PANIC);note("Panic PIN: entering it instead of your PIN erases Enigma at once. It starts as "+PinBox.DEFAULT_PANIC+"; change it to something only you know.");body.addView(panic);}
+        if(create){note("Every unlock needs your passphrase or fingerprint and then this PIN. After "+PinBox.MAX_ATTEMPTS+" wrong PINs Enigma erases itself.");body.addView(pin);body.addView(pinAgain);panic.setText(PinBox.DEFAULT_PANIC);note("Panic PIN: entering it instead of your PIN erases Enigma at once. It starts as "+PinBox.DEFAULT_PANIC+"; change it to something only you know.");body.addView(panic);body.addView(keypad(pin,pinAgain,panic));}
         body.addView(primary(create?"Protect my app":"Unlock",()->{
             char[] chars=password.getText().toString().toCharArray();if(create && (chars.length<12 || !password.getText().toString().equals(confirm.getText().toString()))){Arrays.fill(chars,'\0');password.setError("Use 12–128 characters and matching passphrases");return;}
             String pinValue=create?pin.getText().toString():null,panicValue=create?panic.getText().toString():null;
@@ -668,7 +668,18 @@ public final class MainActivity extends FragmentActivity {
         if(!create && passwordLock.biometricConfigured())body.addView(button("Unlock with biometrics",()->biometric(false)));
         note("Forgotten passphrase? There is no bypass. Android Settings can clear this app's data to start over; that permanently loses local keys and data.");
     }
-    private EditText pinEditor(String hint){EditText edit=editor(hint,false);edit.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);limit(edit,4);return edit;}
+    private EditText pinEditor(String hint){EditText edit=editor(hint,false);edit.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_VARIATION_PASSWORD);edit.setShowSoftInputOnFocus(false);edit.setGravity(Gravity.CENTER);edit.setTextSize(24);limit(edit,4);return edit;}
+    /** On-screen number pad for the PIN fields, so the phone keyboard is never needed; types into whichever field has focus. */
+    private LinearLayout keypad(EditText... fields){
+        LinearLayout pad=column();pad.setPadding(0,dp(8),0,0);String[][] rows={{"1","2","3"},{"4","5","6"},{"7","8","9"},{"clear","0","\u232b"}};
+        for(String[] keys:rows){LinearLayout row=new LinearLayout(this);for(String key:keys){
+            Button b=button(key,()->{EditText target=fields[0];for(EditText f:fields)if(f.hasFocus())target=f;
+                if(key.equals("\u232b")){int n=target.length();if(n>0)target.getText().delete(n-1,n);}else if(key.equals("clear"))target.setText("");else if(target.length()<4)target.append(key);target.setError(null);});
+            b.setTextSize(20);b.setContentDescription(key.equals("\u232b")?"Delete":key.equals("clear")?"Clear":"Digit "+key);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(56),1);lp.setMargins(dp(4),dp(4),dp(4),dp(4));b.setLayoutParams(lp);row.addView(b);}
+          pad.addView(row);}
+        return pad;
+    }
     private static String pinProblem(String pin,String again,String panic){
         if(!PinBox.valid(pin))return "Use exactly 4 digits";if(!pin.equals(again))return "PINs do not match";
         if(!PinBox.valid(panic))return "The panic PIN is 4 digits";if(pin.equals(panic))return "Your PIN and panic PIN must differ";return null;
@@ -693,7 +704,7 @@ public final class MainActivity extends FragmentActivity {
         if(isDestroyed())return;body.removeAllViews();nav.removeAllViews();
         title("Enter your PIN");int left=PinBox.MAX_ATTEMPTS;try{left=pinLock.state().remaining();}catch(Exception ignored){}
         note(left<PinBox.MAX_ATTEMPTS?left+(left==1?" attempt":" attempts")+" left before Enigma erases itself.":"Second step: your 4-digit PIN.");
-        EditText pin=pinEditor("PIN");body.addView(pin);
+        EditText pin=pinEditor("PIN");body.addView(pin);body.addView(keypad(pin));pin.requestFocus();
         body.addView(primary("Unlock",()->{
             String value=pin.getText().toString();pin.setText("");if(!PinBox.valid(value)){pin.setError("Enter your 4-digit PIN");return;}
             byte[] secret=pendingSecret;if(secret==null){lockScreen();return;}byte[] copy=secret.clone();
@@ -714,7 +725,7 @@ public final class MainActivity extends FragmentActivity {
         title("Add an unlock PIN");
         note("Enigma now needs two steps to unlock: your passphrase or fingerprint, then a 4-digit PIN. After "+PinBox.MAX_ATTEMPTS+" wrong PINs Enigma erases itself.");
         EditText pass=passwordEditor("App passphrase");body.addView(passwordField(pass));EditText pin=pinEditor("New 4-digit PIN"),again=pinEditor("Repeat PIN"),panic=pinEditor("Panic PIN");
-        body.addView(pin);body.addView(again);panic.setText(PinBox.DEFAULT_PANIC);note("Panic PIN: entering it instead of your PIN erases Enigma at once. It starts as "+PinBox.DEFAULT_PANIC+"; change it to something only you know.");body.addView(panic);
+        body.addView(pin);body.addView(again);panic.setText(PinBox.DEFAULT_PANIC);note("Panic PIN: entering it instead of your PIN erases Enigma at once. It starts as "+PinBox.DEFAULT_PANIC+"; change it to something only you know.");body.addView(panic);body.addView(keypad(pin,again,panic));
         body.addView(primary("Save PIN",()->{
             String problem=pinProblem(pin.getText().toString(),again.getText().toString(),panic.getText().toString());if(problem!=null){pin.setError(problem);return;}
             char[] chars=pass.getText().toString().toCharArray();String pinValue=pin.getText().toString(),panicValue=panic.getText().toString();pass.setText("");pin.setText("");again.setText("");
@@ -729,7 +740,7 @@ public final class MainActivity extends FragmentActivity {
         body.addView(button("Lock Enigma",this::lockNow));
     }
     private void changePin(){reauth("Confirm PIN change",()->{
-        LinearLayout view=column();EditText pin=pinEditor("New 4-digit PIN"),again=pinEditor("Repeat PIN"),panic=pinEditor("Panic PIN");view.addView(pin);view.addView(again);view.addView(panic);
+        LinearLayout view=column();EditText pin=pinEditor("New 4-digit PIN"),again=pinEditor("Repeat PIN"),panic=pinEditor("Panic PIN");view.addView(pin);view.addView(again);view.addView(panic);view.addView(keypad(pin,again,panic));
         try{panic.setText(pinLock.state().panic);}catch(Exception ignored){}
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Change PIN or panic PIN").setView(view).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
@@ -791,10 +802,15 @@ public final class MainActivity extends FragmentActivity {
         if(sessionLocked && !unlocking){error("Unlock Enigma first");return;}
         if(busy || broken){if(broken)error("Close and reopen the app to reload its secure vault.");return;}
         final int generation=session;busy=true;setEnabled(root,false);progress.setText("Working…");progress.setVisibility(View.VISIBLE);
-        worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()||generation!=session){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setVisibility(View.GONE);try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed()||generation!=session)return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(e instanceof EOFException?"Incomplete encrypted message or file":e.getMessage());});}});
+        worker.execute(()->{try{T result=job.run();ui.post(()->{busy=false;if(isDestroyed()||generation!=session){discardResult(result);return;}setEnabled(root,true);refreshSendActions();progress.setVisibility(View.GONE);try{success.run(result);}catch(Exception e){error(e.getMessage());}});}catch(Exception e){ui.post(()->{busy=false;if(isDestroyed()||generation!=session)return;setEnabled(root,true);refreshSendActions();progress.setText("Action needs attention");error(friendly(e));});}});
     }
     private void discardResult(Object result){if(result instanceof Bitmap)((Bitmap)result).recycle();else if(result instanceof Protocol.Group)Arrays.fill(((Protocol.Group)result).seed,(byte)0);else if(result instanceof Object[])for(Object item:(Object[])result)discardResult(item);else if(result instanceof AutoCloseable)try{((AutoCloseable)result).close();}catch(Exception ignored){}else if(result instanceof File)((File)result).delete();else if(result instanceof byte[])Arrays.fill((byte[])result,(byte)0);}
     private void setEnabled(View view,boolean enabled){view.setEnabled(enabled);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)setEnabled(group.getChildAt(i),enabled);}}
+    /** Parsing failures (wrong version, other keys, damaged file) get one plain explanation instead of a low-level message. */
+    private static String friendly(Exception e){
+        if(e instanceof EOFException||(e instanceof IOException&&!(e instanceof FileNotFoundException)))return "This is not an Enigma message this version can open. It may come from an older Enigma version, be made for different keys or a different group, or be damaged. Nothing was opened.";
+        return e.getMessage();
+    }
     private void error(String text){if(!isDestroyed())transientDialog=new AlertDialog.Builder(this).setTitle("Action could not be completed").setMessage(text==null?"Invalid or unsupported encrypted data":text).setPositiveButton("OK",null).show();}
     private interface NameAction{void run(String value);}
     private void editName(String title,String initial,int max,NameAction action){EditText name=editor(title,false);name.setText(initial);limit(name,max);AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(name).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=name.getText().toString().trim();if(value.isEmpty()){name.setError("Enter a name");return;}dialog.dismiss();action.run(value);}));transientDialog=dialog;dialog.show();}

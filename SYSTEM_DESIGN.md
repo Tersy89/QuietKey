@@ -1,6 +1,6 @@
 # Enigma system design
 
-Version: 0.7.0 development build (branch feature/0.7.0-messages). Updated: 30 October 2026.
+Version: 1.0.0 (versionCode 13), a development prototype release. Updated: 30 October 2026.
 
 > **0.7.0 status:** the app now uses the design in "0.7.0 message security" below. Sections that still describe RSA identities, QKD3/file-v3 packets, QKJ1/QKG2/QKA1 joining, ciphertext-only history or biometrics as an alternative to the passphrase describe 0.6.0. Where they conflict, the 0.7.0 section is authoritative. Rewriting those sections in full is still to do before merging to main.
 
@@ -63,7 +63,7 @@ Keys/plaintext exist in process memory during use. Byte arrays are cleared where
 
 On first use the user chooses and repeats an app passphrase before device setup. Password entry is hidden by default, with an explicit visibility toggle that preserves the cursor and typed value. Existing development data may be opened during the initial password setup and rewritten with the random master key. Legacy data compatibility is not a supported release commitment.
 
-Opening Enigma requires the passphrase or an explicitly enabled biometric route, and since 0.7.0 the 4-digit PIN as well (decision 12). Before successful decryption no groups, history or group secrets are loaded. Wrong-password attempts incur a persistent increasing UI delay capped at 60 seconds; this is not protection against offline guessing or a modified/rooted client. Argon2 is the computational barrier for copied password envelopes.
+Opening Enigma requires the passphrase or an explicitly enabled biometric route, and since 0.7.0 the 4-digit PIN as well (decision 12). PINs are entered on a number pad drawn by Enigma itself (the phone keyboard is suppressed for PIN fields), so no third-party keyboard sees the PIN; the passphrase still uses the phone keyboard. Before successful decryption no groups, history or group secrets are loaded. Wrong-password attempts incur a persistent increasing UI delay capped at 60 seconds; this is not protection against offline guessing or a modified/rooted client. Argon2 is the computational barrier for copied password envelopes.
 
 Leaving Enigma locks it, clears the visible data and queues disposal of loaded secrets. Screen-off always locks. Camera setup and Android document pickers receive a controlled session allowance of at most two minutes; scanning the joining code allows five minutes and the Wi-Fi connection prompt 90 seconds. Screen-off still locks immediately; they are not general background-unlock permission. A generation counter rejects asynchronous results from an obsolete session. Streaming exports check the session while writing and request deletion of failed/partial destinations. External storage providers may retain copies or fail deletion.
 
@@ -338,6 +338,7 @@ Planned work: per-message forward secrecy, separate signing/agreement identities
 
 ## Change log
 
+- 1.0.0 / 30 October 2026: first release version after phone testing of 0.7.0 (joining between two phones, JPEG sending, panic PIN, old-format file refused). PIN entry uses an in-app number pad; files that cannot be parsed (older format, other keys, damaged) show one plain explanation instead of "Invalid packet size". No protocol or storage change.
 - 0.7.0 / 30 October 2026 (branch, security review): removed or blocked members' keys are now deleted when they are no longer in any group on the device; prekey signature, root PIN-guessing, INTERNET permission and vault-key randomness limits documented.
 - 0.7.0 / 30 October 2026 (branch): hybrid algorithms (X25519 + ML-KEM-768, Ed25519 + ML-DSA-65; ENG5, QKJ4/QKG4/QKA4, vault format 3) and two-step unlock (passphrase or biometrics, then a PIN; wipe after 5 wrong PINs or on the panic PIN).
 - 0.7.0 / 29 October 2026 (branch): Ed25519/X25519 identities in the vault, camera and motion entropy, X3DH one-time keys with per-contact pools and owner introductions, multiple recipients, view once, readable history stored encrypted in the vault, 0.6.0 vault upgrade screen; RSA formats removed.

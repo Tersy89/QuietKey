@@ -1,3 +1,33 @@
+Enigma 1.0.0 - 30 October 2026
+
+Owner phone testing of the versionCode 12 build (reported in chat): joining between two phones,
+sending a JPEG, opening an older .enigma file from the same phone under different keys (refused with
+"Invalid packet size"), and the panic PIN all worked. Requested improvement: PIN keypad in the app.
+Changes in 1.0.0 (versionCode 13): in-app number pad for the PIN, repeat PIN and panic PIN fields
+(setup, unlock, PIN setup for older installs, change PIN); the phone keyboard is suppressed for them.
+Unreadable files (older format, other keys, damaged, truncated) show one plain explanation instead of
+"Invalid packet size". Includes the removed-member key cleanup (a9c4b76), which the phone-tested
+build did not have. No protocol, key or storage change.
+
+Executed on this PC (Windows, JDK 17, Gradle 8.9, AGP 8.7.3, SDK 35):
+- gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest lintDebug: success.
+- 68 JVM unit tests, 0 failures. Lint: 0 errors, 32 warnings.
+Executed on the EnigmaShots emulator (API 35, disposable), driven by hand with uiautomator:
+- Fresh install: Protect Enigma screen shows the in-app number pad; passphrase typed on the phone
+  keyboard, then PIN and Repeat PIN typed on the pad only (the phone keyboard stayed hidden:
+  mInputShown=false); delete key works; setup completed.
+- Unlock: passphrase, then the PIN screen with the pad; a wrong PIN showed "4 attempts left"; the
+  correct PIN opened the vault.
+Not run: PinLockTest and ScreenshotTest were not re-run for 1.0.0 (they type into the PIN fields);
+README screenshots were not refreshed, so the PIN screens in them still show the old fields; the
+pad in the change-PIN dialog and PIN setup for older installs; fingerprint + PIN; the new
+"not an Enigma message this version can open" text on a real unreadable file; two-phone messaging on
+the 1.0.0 build. Not an independent security audit.
+Enigma.apk (repository root): app.quietkey.debug 1.0.0-debug, versionCode 13, 6352334 bytes,
+SHA-256 8350fa8e4cf69d8078b396c37c9c630cfdaa587cad1e8ca5062f2358b3346e66.
+
+----------------------------------------------------------------------------------------------
+
 Enigma 0.7.0 security-review fixes - 30 October 2026 (branch feature/0.7.0-messages)
 
 A code and design review found that KeyPools.forget() had no callers: removed or blocked members'
