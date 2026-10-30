@@ -38,7 +38,7 @@ You write the message in Enigma, and it becomes a small encrypted `.enigma` file
 
 The app ID and debug signer are unchanged. Install over the existing test app if you want to retain its data. Older development formats are not a compatibility commitment. Update both devices to **0.6.0**: Messages is now a chat list with **Send** and **Receive**; typed messages travel as small `.enigma` files by default; received photos and text open inside the app. Joining uses one QR code or an NFC tap, or manual file transfer. QKD3 text and file-v3 remain the current message formats.
 
-**New to Enigma? Read the [user guide](docs/USER_GUIDE.md)** for step-by-step instructions with screenshots and a plain-language summary of how the security works.
+**New to Enigma? Read the [user guide](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/user-guide.html) ([source](docs/user-guide.html))** for step-by-step instructions with screenshots and a plain-language summary of how the security works.
 
 ## Protect and set up your device
 
