@@ -2,7 +2,60 @@
 
 Development prototype, not independently audited. Nothing here is a security audit. See SYSTEM_DESIGN.md for the implemented architecture and formats and VERIFICATION.txt for the tests actually executed. SECURITY_REVIEW.md records the historical 0.3 findings.
 
-A plain-language version of this page is in the [user guide](docs/user-guide.html).
+An illustrated version with diagrams is [docs/security.html](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/security.html) ([source](docs/security.html)). Step-by-step use is in the [user guide](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/user-guide.html).
+
+## At a glance
+
+### Five layers between an attacker and your message
+
+| Layer | What it does | Protects |
+|---|---|---|
+| **Unlock** | Passphrase or fingerprint, then a 4-digit PIN on Enigma's own number pad. 5 wrong PINs or the panic PIN erase everything. | The phone at rest |
+| **Vault** | Identity keys, key pools, group secrets and opened history, AES-256-GCM encrypted under the vault master key. | The phone at rest |
+| **Joining in person** | QR code or NFC tap, matching check codes, owner-signed invitation encrypted only to the joining phone. | Who is trusted |
+| **Group secret** | A 32-byte secret shared only by members, mixed into every message key. Outsiders cannot derive any key. | Keeps outsiders out |
+| **Per-recipient message key** | One-time key, used once and deleted. X25519 + ML-KEM-768 together, signed with Ed25519 + ML-DSA-65. | Each message in transit |
+
+### Keys each phone holds
+
+| Key | Algorithms | Lifetime | Job | Size |
+|---|---|---|---|---|
+| **Identity** | Ed25519 + ML-DSA-65 signing, X25519 agreement | Until you start fresh | Proves who you are. Exchanged only in person. Fingerprint = SHA-256 of all three public keys. | 2,016 B public |
+| **One-time keys** | X25519 + ML-KEM-768 | One message | Each message to you uses one; its private half is deleted after the message is opened. 100 held per contact. | 1,312 B each |
+| **Backup key** | X25519 + ML-KEM-768 | Replaced every 30 days, kept 365 more | Used only when a sender has run out of your one-time keys ("Reduced protection"). | 1,312 B |
+| **Owner reserve** | X25519 + ML-KEM-768 | Until a new member joins | 20 public one-time keys each member gives the owner, so later members can message you at full protection from the first message. | 20 x 1,312 B |
+| **Group secret** | 256-bit random value | Life of the group | Salt for every message key and the key for the member list carried in messages. | 32 B |
+| **Vault master key** | AES-256-GCM | Life of the installation | Encrypts everything above on the phone. Released only by passphrase or fingerprint plus PIN. | 32 B |
+
+Signatures carry both halves: 64 bytes of Ed25519 followed by 3,309 bytes of ML-DSA-65. Both must verify or the packet is rejected.
+
+### What an attacker gets
+
+| Scenario | Result | Why |
+|---|---|---|
+| Intercepts the `.enigma` file in a messenger | Nothing readable | Needs a recipient's one-time private key and the group secret. |
+| Breaks X25519 or Ed25519 (new maths or a quantum computer) | Still protected | ML-KEM-768 and ML-DSA-65 still have to be broken too. |
+| Finds a flaw in ML-KEM or ML-DSA | Still protected | X25519 and Ed25519 still stand. The new algorithms are young, which is why they are paired. |
+| Group member who was not a recipient | Nothing readable | Has the group secret but not the recipients' one-time keys. |
+| Photographs the joining QR code | Nothing readable | The QR key only protects the local link; the invitation is encrypted to the joining phone, and the check codes would not match. |
+| Steals a locked phone | Nothing readable | Needs passphrase or fingerprint, plus the PIN. |
+| Copies the app's files off the phone | Nothing readable | The vault needs both steps, and the unlock files are wrapped by a key that cannot leave the phone's security hardware. |
+| Steals the phone later and breaks in | New messages only | Old messages' one-time keys are gone. Stored history and future messages are exposed, and the thief can pose as you until you start fresh and rejoin. |
+| A keyboard app records typing | Passphrase at risk | The PIN uses Enigma's own number pad; the passphrase and typed messages still go through the keyboard. |
+| Forces you to unlock | Your choice | Enter the panic PIN and Enigma erases itself. |
+| Root access plus your passphrase or fingerprint | PIN can be guessed | Root can use the security key to try all 10,000 PINs without the wrong-PIN count. |
+| Malware on an unlocked phone | Exposed | No app can protect against a compromised operating system while in use. |
+| Watches the messenger traffic | Metadata only | Who sends files to whom, when, and how large. Not the content. |
+| Sends a damaged or old-format file | Nothing opens | Lengths and signatures are checked first; one plain explanation is shown. |
+
+### Unlock and wipe in one picture
+
+```
+Step 1 (either):  passphrase --Argon2id--+
+                  fingerprint (Keystore) -+--> first-step secret --+
+Step 2 (always):  4-digit PIN --Argon2id-----------------------------+--> HKDF --> vault master key
+5 wrong PINs, or the panic PIN --> delete Keystore keys first, then every file
+```
 
 ## Intended protection
 

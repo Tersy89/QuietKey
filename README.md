@@ -4,7 +4,7 @@ Enigma is an Android app that gives you and the people you trust **your own encr
 
 You write the message in Enigma, and it becomes a small encrypted `.enigma` file (or a block of encrypted text) that only the people you chose can open. Send it however you like. On their phone they tap the file, choose Enigma, and read it there.
 
-**Version 1.0.0.** [Download](#download) · **[User guide](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/user-guide.html)** ([source](docs/user-guide.html)) · [How the security works](#how-the-security-works)
+**Version 1.0.0.** [Download](#download) · **[User guide](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/user-guide.html)** ([source](docs/user-guide.html)) · **[Security overview](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/security.html)** (illustrated) · [How the security works](#how-the-security-works)
 
 - **Your keys, made on your phone.** Each phone makes its own keys, mixing the system's secure randomness with live camera and motion-sensor input. No account, no server, no phone number.
 - **Two families of cryptography at once.** Every key agreement is X25519 **plus** ML-KEM-768 (post-quantum), and every signature is Ed25519 **plus** ML-DSA-65. An attacker would have to break both families.
@@ -23,9 +23,9 @@ You write the message in Enigma, and it becomes a small encrypted `.enigma` file
 |---|---|---|
 | <img src="docs/screenshots/02-messages.png" width="240" alt="Messages list with Send and Receive"> | <img src="docs/screenshots/03-chat.png" width="240" alt="Conversation with Sam"> | <img src="docs/screenshots/04-photo.png" width="240" alt="Encrypted photo opened inside Enigma"> |
 
-| Send: message, group, people | Join a group in person | Locked by default |
+| Send: message, group, people | Join a group in person | Second step: PIN on Enigma's own pad |
 |---|---|---|
-| <img src="docs/screenshots/06-send.png" width="240" alt="Send screen"> | <img src="docs/screenshots/09-join.png" width="240" alt="Join a group options"> | <img src="docs/screenshots/01-unlock.png" width="240" alt="Unlock screen"> |
+| <img src="docs/screenshots/06-send.png" width="240" alt="Send screen"> | <img src="docs/screenshots/09-join.png" width="240" alt="Join a group options"> | <img src="docs/screenshots/10-pin.png" width="240" alt="PIN screen with the in-app number pad"> |
 
 *These show demo people and messages on an emulator. The messages are really encrypted, created by `ScreenshotTest`. Enigma blocks normal screenshots, so these are rendered from inside the app.*
 
@@ -58,7 +58,7 @@ The **[user guide](https://htmlpreview.github.io/?https://github.com/Tersy89/Qui
 | **Group secret** | A 32-byte secret shared only by members and mixed into every message key. |
 | **Per-recipient message key** | A one-time key, used once and deleted: X25519 + ML-KEM-768, signed with Ed25519 + ML-DSA-65. |
 
-If a flaw or a quantum computer breaks one cryptographic family, the other still protects the message. If a sender runs out of your one-time keys, it uses your backup key and both phones show **Reduced protection** on that message. Accepted limits (for example, someone with root access to the phone who also has your passphrase or fingerprint could try all PINs) are listed in [SECURITY.md](SECURITY.md) and [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md).
+If a flaw or a quantum computer breaks one cryptographic family, the other still protects the message. If a sender runs out of your one-time keys, it uses your backup key and both phones show **Reduced protection** on that message. Accepted limits (for example, someone with root access to the phone who also has your passphrase or fingerprint could try all PINs) are listed in [SECURITY.md](SECURITY.md) and [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md). The [illustrated security overview](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/security.html) has diagrams of each step, the key table and a threat-by-threat table.
 
 ## Protect and set up your device
 

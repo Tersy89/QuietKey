@@ -37,7 +37,7 @@ public final class ScreenshotTest {
         seed(context);
         try(ActivityScenario<MainActivity> s=ActivityScenario.launch(MainActivity.class)){
             waitFor(s,"Unlock Enigma");shot(s,"01-unlock");
-            s.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(s,"Unlock");waitFor(s,"Enter your PIN");
+            s.onActivity(a->editor(a.getWindow().getDecorView()).setText(PASS));click(s,"Unlock");waitFor(s,"Enter your PIN");shot(s,"10-pin");
             s.onActivity(a->editor(a.getWindow().getDecorView()).setText(PIN));click(s,"Unlock");waitFor(s,"Receive");shot(s,"02-messages");
             clickCard(s,"Sam");waitFor(s,"Back to messages");shot(s,"03-chat");
             clickCard(s,"beach.jpg");waitFor(s,"Back to chat");shot(s,"04-photo");
@@ -45,6 +45,7 @@ public final class ScreenshotTest {
             click(s,"Messages");click(s,"Send");waitFor(s,"1 · MESSAGE OR FILE");
             s.onActivity(a->{editor(a.getWindow().getDecorView()).setText("The new Wi-Fi password is on the fridge 🙂");((CheckBox)((View)findPrefix(a.getWindow().getDecorView(),"Sam ·"))).setChecked(true);});Thread.sleep(300);shot(s,"06-send");
             click(s,"Messages");click(s,"Receive");waitFor(s,"Open .enigma file");shot(s,"07-receive");
+            click(s,"Device");click(s,"Security & unlock");waitFor(s,"Lock Enigma now");shot(s,"11-security");
             click(s,"Groups");waitFor(s,"Create a group");shot(s,"08-groups");
             click(s,"Join group");Thread.sleep(500);shot(s,"09-join");
         }
