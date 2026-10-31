@@ -89,7 +89,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-size:.86rem;color:
     <svg viewBox="0 0 26 30" aria-hidden="true"><path d="M13 1 2 5.5v8.2C2 21 6.8 26.6 13 29c6.2-2.4 11-8 11-15.3V5.5Z" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--mint)"/><rect x="8.5" y="13" width="9" height="8" rx="1.5" style="fill:var(--mint)"/><path d="M10.3 13v-2.3a2.7 2.7 0 0 1 5.4 0V13" fill="none" stroke-width="1.8" style="stroke:var(--mint)"/></svg>
     ENIGMA
   </div>
-  <p class="eyebrow">Security overview · version 1.0.0</p>
+  <p class="eyebrow">Security overview · version 1.1.0</p>
   <h1>How Enigma keeps secrets</h1>
   <p class="muted">Enigma is an Android app for sending encrypted messages and files through any messenger you already use. Keys are made on the phone, exchanged in person, and never touch a server. This page explains each layer, what it protects against, and where its limits are.</p>
   <div class="status">
@@ -125,8 +125,8 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-size:.86rem;color:
       </g>
       <g>
         <rect class="box" x="20" y="180" width="860" height="66" rx="10"/>
-        <text x="44" y="210" font-size="17" font-weight="600">Joining in person</text>
-        <text x="44" y="232" font-size="13" class="t-muted">QR code or NFC tap, matching check codes, owner-signed invitation encrypted only to the joining phone.</text>
+        <text x="44" y="210" font-size="17" font-weight="600">Joining</text>
+        <text x="44" y="232" font-size="13" class="t-muted">In person by QR or NFC with check codes, or remotely by passphrase.</text>
         <text x="856" y="216" font-size="12" text-anchor="end" class="t-mono t-muted">decides who is trusted</text>
       </g>
       <g>
@@ -201,6 +201,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-size:.86rem;color:
   <p class="eyebrow">Building trust</p>
   <h2>Joining a group happens face to face</h2>
   <p>There is no key server and no directory. The owner's phone and the joining phone meet in person, connect over a local hotspot or the same Wi-Fi, and both screens show a six-digit check code that the two people compare before anything is accepted.</p>
+  <p><strong>From a distance (1.1.0):</strong> the two people agree a passphrase of four or more words by voice, then swap two files over Signal or any app. The request holds only public keys; the invitation is encrypted to the joining phone. Each file carries a tag made with the passphrase (PBKDF2-SHA-256, 310,000 rounds, then HMAC), so a swapped file is refused. A request lasts seven days and works once.</p>
   <div class="fig wide">
     <svg viewBox="0 0 900 470" role="img" aria-label="Joining sequence between owner and joining phone">
       <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" class="fill-mint"/></marker></defs>
@@ -354,6 +355,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-size:.86rem;color:
         <tr><td>Steals a locked phone</td><td><span class="verdict safe">Nothing readable</span></td><td>Needs passphrase or fingerprint, plus the PIN. The vault key never exists without both.</td></tr>
         <tr><td>Copies the app's files off the phone</td><td><span class="verdict safe">Nothing readable</span></td><td>The vault needs the passphrase or fingerprint plus the PIN, and the unlock files are also wrapped by a key that cannot leave the phone's security hardware.</td></tr>
         <tr><td>Steals the phone later and breaks in</td><td><span class="verdict part">New messages only</span></td><td>Old messages' one-time keys are gone. Your stored history and future messages are exposed, and the thief can pose as you until you start fresh and rejoin.</td></tr>
+        <tr><td>Reads the joining files in Signal</td><td><span class="verdict safe">Nothing readable</span></td><td>The request is public keys only and the invitation is encrypted to the joining phone. Swapping either file fails the passphrase tag.</td></tr>
         <tr><td>Photographs your joining QR code</td><td><span class="verdict safe">Nothing readable</span></td><td>The QR key only protects the local link. The invitation is encrypted to the joining phone's own keys, and the check codes would not match.</td></tr>
         <tr><td>A keyboard app records what you type</td><td><span class="verdict part">Passphrase at risk</span></td><td>The PIN uses Enigma's own number pad, so the keyboard never sees it. The passphrase and messages you type still go through the keyboard; use one you trust.</td></tr>
         <tr><td>Forces you to unlock</td><td><span class="verdict part">Your choice</span></td><td>Enter the panic PIN instead of your PIN and Enigma erases itself.</td></tr>
@@ -386,7 +388,7 @@ footer{border-top:1px solid var(--line);padding-top:20px;font-size:.86rem;color:
 </section>
 
 <footer>
-  <span>Enigma 1.0.0 · 30 October 2026 · <a href="https://github.com/Tersy89/QuietKey" style="color:var(--mint)">github.com/Tersy89/QuietKey</a></span>
+  <span>Enigma 1.1.0 · 31 October 2026 · <a href="https://github.com/Tersy89/QuietKey" style="color:var(--mint)">github.com/Tersy89/QuietKey</a></span>
   <span>Algorithms: X25519, Ed25519, ML-KEM-768 (FIPS 203), ML-DSA-65 (FIPS 204), AES-256-GCM, HKDF-SHA-256, Argon2id. Library: Bouncy Castle 1.86. Full detail in SYSTEM_DESIGN.md and SECURITY.md in the repository; step-by-step use in the user guide.</span>
 </footer>
 

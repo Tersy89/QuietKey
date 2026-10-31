@@ -27,7 +27,8 @@ public final class JoinProtocol {
     public static final String REQUEST="QKJ4:",INVITATION="QKG4:",RECEIPT="QKA4:";
     /** Text limits (base64 characters) for packets and byte limits for rosters; hybrid keys make them larger than 0.6.0's. */
     public static final int MAX_REQUEST=64000,MAX_INVITATION=600000,MAX_RECEIPT=200000,MAX_ROSTER=262144,MAX_CARRIER=MAX_ROSTER+64,MAX_MEMBERS=30;
-    public static final long WINDOW=300000;
+    /** Nearby joining requests live five minutes; remote (file) requests seven days, each still usable once. */
+    public static final long WINDOW=300000,FILE_WINDOW=7L*24*60*60*1000;
 
     public static final class Request {
         public final Identity.Public key;public final String name,id;public final long created,expires;public final PreKey backup;public final List<PreKey> reserve;
@@ -127,11 +128,13 @@ public final class JoinProtocol {
     private static byte[] rosterKey(Protocol.Group g)throws Exception{return Protocol.hkdf(g.seed,g.id.getBytes(StandardCharsets.UTF_8),"Enigma/directory-carrier/v3".getBytes(StandardCharsets.UTF_8));}
 
     // ---- joining ----
-    public static String request(Identity me,KeyPools pools,Entropy entropy,String name)throws Exception{
+    public static String request(Identity me,KeyPools pools,Entropy entropy,String name)throws Exception{return request(me,pools,entropy,name,WINDOW);}
+    public static String request(Identity me,KeyPools pools,Entropy entropy,String name,long window)throws Exception{
+        if(window!=WINDOW&&window!=FILE_WINDOW)throw new IllegalArgumentException("Invalid joining window");
         if(name.trim().isEmpty()||name.length()>40)throw new IllegalArgumentException("Name this device first");
         long now=System.currentTimeMillis();byte[] id=Arrays.copyOf(entropy.next32("request-id"),16);
         PreKey backup=pools.backup(me,entropy,now);List<PreKey> reserve=pools.issueReserve(me,entropy,now);
-        byte[] body=pack(o->{o.writeUTF("join-request-v4");blob(o,me.publicKey.encode());o.writeUTF(name.trim());blob(o,id);o.writeLong(now);o.writeLong(now+WINDOW);backup.write(o);o.writeInt(reserve.size());for(PreKey k:reserve)k.write(o);});
+        byte[] body=pack(o->{o.writeUTF("join-request-v4");blob(o,me.publicKey.encode());o.writeUTF(name.trim());blob(o,id);o.writeLong(now);o.writeLong(now+window);backup.write(o);o.writeInt(reserve.size());for(PreKey k:reserve)k.write(o);});
         return REQUEST+Protocol.b64(signed(body,me));
     }
     public static Request parseRequest(String wire)throws Exception{
@@ -140,7 +143,7 @@ public final class JoinProtocol {
         Identity.Public key=Identity.Public.decode(blob(in,Identity.PUBLIC));String name=in.readUTF();byte[] id=blob(in,16);long created=in.readLong(),expires=in.readLong();PreKey backup=PreKey.read(in);
         int n=in.readInt();if(n<0||n>KeyPools.RESERVE)throw new SecurityException("Invalid joining request");List<PreKey> reserve=new ArrayList<>();for(int i=0;i<n;i++)reserve.add(PreKey.read(in));end(in);
         if(!key.verify(body,signature))throw new SecurityException("Invalid signature");
-        if(name.trim().isEmpty()||name.length()>40||id.length!=16||expires-created!=WINDOW||!backup.verify(key,PreKey.BACKUP))throw new SecurityException("Invalid joining request");
+        if(name.trim().isEmpty()||name.length()>40||id.length!=16||(expires-created!=WINDOW&&expires-created!=FILE_WINDOW)||!backup.verify(key,PreKey.BACKUP))throw new SecurityException("Invalid joining request");
         for(PreKey k:reserve)if(!k.verify(key,PreKey.ONE_TIME))throw new SecurityException("Invalid joining request");
         Expiry.check(created,expires,expires);return new Request(key,name,Protocol.b64(id),created,expires,backup,reserve);
     }
@@ -188,7 +191,7 @@ public final class JoinProtocol {
         if(!h.readUTF().equals("invite-v4"))throw new SecurityException("Update Enigma on both phones");Identity.Public owner=Identity.Public.decode(blob(h,Identity.PUBLIC));
         if(!h.readUTF().equals(me.fingerprint())||!h.readUTF().equals(request.id))throw new SecurityException("This invitation is for another device or joining session");
         long created=h.readLong(),expires=h.readLong();byte[] ephemeral=blob(h,32),kemCipher=blob(h,PostQuantum.KEM_CIPHERTEXT),nonce=blob(h,12);end(h);
-        if(nonce.length!=12||ephemeral.length!=32||expires>request.expires||expires-created>WINDOW)throw new SecurityException("Invalid invitation lifetime");
+        if(nonce.length!=12||ephemeral.length!=32||expires>request.expires||expires-created>FILE_WINDOW)throw new SecurityException("Invalid invitation lifetime");
         if(!owner.verify(body,signature))throw new SecurityException("Invalid signature");Expiry.check(created,expires,expires);
         byte[] backup=pools.backupPrivate(request.backup.id);if(backup==null)throw new SecurityException("This device no longer has the key for that joining request");
         byte[] kemSeed=Arrays.copyOfRange(backup,32,KeyPools.PRIVATE),key;

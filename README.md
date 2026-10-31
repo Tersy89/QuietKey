@@ -4,14 +4,14 @@ Enigma is an Android app that gives you and the people you trust **your own encr
 
 You write the message in Enigma, and it becomes a small encrypted `.enigma` file (or a block of encrypted text) that only the people you chose can open. Send it however you like. On their phone they tap the file, choose Enigma, and read it there.
 
-**Version 1.0.0.** [Download](#download) · **[User guide](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/user-guide.html)** ([source](docs/user-guide.html)) · **[Security overview](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/security.html)** (illustrated) · [How the security works](#how-the-security-works)
+**Version 1.1.0.** [Download](#download) · **[User guide](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/user-guide.html)** ([source](docs/user-guide.html)) · **[Security overview](https://htmlpreview.github.io/?https://github.com/Tersy89/QuietKey/blob/main/docs/security.html)** (illustrated) · [How the security works](#how-the-security-works)
 
 - **Your keys, made on your phone.** Each phone makes its own keys, mixing the system's secure randomness with live camera and motion-sensor input. No account, no server, no phone number.
 - **Two families of cryptography at once.** Every key agreement is X25519 **plus** ML-KEM-768 (post-quantum), and every signature is Ed25519 **plus** ML-DSA-65. An attacker would have to break both families.
 - **A fresh key for every message.** Each message uses a one-time key whose private half is deleted once the message is opened, so old messages stay safe even if your phone is stolen later.
 - **Works over any channel.** Enigma doesn't send anything itself. The messenger or email only ever carries ciphertext.
 - **Send to one person or several.** Every recipient is signed into the message, so a message can't be re-addressed to someone else.
-- **Join in person.** People join a group by scanning a QR code or tapping phones (NFC) while they're together. Keys travel over a short-lived private Wi-Fi link with an extra layer of encryption and a six-digit check code. A manual file route (for example over USB) also works.
+- **Join in person or from a distance.** Together, people join by scanning a QR code or tapping phones (NFC); keys travel over a short-lived private Wi-Fi link with an extra layer of encryption and a six-digit check code. Apart, they swap two small files over Signal (or any app), protected by a passphrase they agreed by voice.
 - **Two-step unlock with a self-destruct.** Passphrase or fingerprint, then a 4-digit PIN typed on Enigma's own number pad. Five wrong PINs, or a panic PIN you choose (9999 until you change it), erase Enigma's keys and data.
 - **Read inside the app.** Received photos and text open inside Enigma. Nothing readable is saved to the phone unless you choose **Save to device**, which asks for your passphrase. Enigma locks whenever you leave it and blocks screenshots.
 
@@ -54,7 +54,7 @@ The **[user guide](https://htmlpreview.github.io/?https://github.com/Tersy89/Qui
 |---|---|
 | **Unlock** | Passphrase or fingerprint, then a 4-digit PIN that is part of the vault key. 5 wrong PINs or the panic PIN erase everything. |
 | **Vault** | Identity keys, key pools, group secrets and opened history are encrypted with AES-256-GCM under the vault master key. |
-| **Joining in person** | QR code or NFC tap, matching check codes, and an owner-signed invitation encrypted only to the joining phone. |
+| **Joining** | In person: QR code or NFC tap with matching check codes. From a distance: files tagged with a passphrase agreed by voice. Either way the invitation is owner-signed and encrypted only to the joining phone. |
 | **Group secret** | A 32-byte secret shared only by members and mixed into every message key. |
 | **Per-recipient message key** | A one-time key, used once and deleted: X25519 + ML-KEM-768, signed with Ed25519 + ML-DSA-65. |
 
@@ -81,15 +81,16 @@ Only the owner creates the group. On that phone open **Groups → group → Invi
 
 The code works once and expires after five minutes. Only show it to the person joining. Keep both apps open; Cancel, background or screen-off stops joining. If both phones are already on the same private Wi-Fi, the owner can choose **Nearby on the same Wi-Fi** instead.
 
-### Manual transfer (USB cable or any file copy)
+### Joining from a distance (Signal or any file transfer)
 
-1. Recipient: **Join group → By file: save my request**. Copy the file to the owner's phone, for example through a computer over USB cables, or use **Copy text**.
-2. Owner: **Invite new recipient → By file: open their request**, check the device and tap **Invite**, then **Save file** for the invitation and copy it back.
-3. Recipient: **Join group → By file: open the owner's invitation**. Compare the six-digit check code with the owner in person or on a call, then tap **Codes match · Join**. Optionally save a confirmation file for the owner (**By file: open their confirmation**); the first verified message also confirms joining.
+1. **Agree a passphrase** of at least four words on a call or in person, for example *orange tiger harbour nine*. Never send it in the same chat as the files.
+2. Joining person: **Groups → Join group → By Signal or file: make my request**, type the passphrase, tap **Share** and send the file to the owner (Signal, email, a USB stick, anything).
+3. Owner: tap the file in Signal to open it in Enigma (or **Invite new recipient → By Signal or file: open their request**), type the passphrase, check the name and tap **Invite**, then **Share** the invitation back.
+4. Joining person: tap the invitation to open it in Enigma and tap **Join**. Then send the owner a message: when it arrives, the owner sees them as **Joined**.
 
-The files contain only a public request, an invitation encrypted for the recipient's phone, and a signed confirmation, so any transport is fine. Request files expire five minutes after they are made.
+The request holds only public keys and a device name, and the invitation is encrypted so only the joining phone can open it, so Signal (or any route) is fine for both. The passphrase stops someone swapping a file: each file carries a tag that can only be made with it. A request lasts seven days and works once.
 
-Private identity keys never leave the phone. Names and self-signed keys alone do not prove a real-world identity; pair with the known person's device and compare check codes.
+Private identity keys never leave the phone. Names and self-signed keys alone do not prove a real-world identity; pair with the known person's device and compare check codes, or agree the passphrase with them by voice.
 
 The owner repeats this for each new device, up to 30 per group. When someone joins later, the owner's signed member list travels inside messages, so existing members learn about the new person and can message them at full protection. A device identity can join multiple groups, each with an independent secret.
 
