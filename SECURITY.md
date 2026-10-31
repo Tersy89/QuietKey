@@ -1,4 +1,4 @@
-# Enigma 1.0.0 security model
+# Enigma 1.1.0 security model
 
 Development prototype, not independently audited. Nothing here is a security audit. See SYSTEM_DESIGN.md for the implemented architecture and formats and VERIFICATION.txt for the tests actually executed. SECURITY_REVIEW.md records the historical 0.3 findings.
 
@@ -12,7 +12,7 @@ An illustrated version with diagrams is [docs/security.html](https://htmlpreview
 |---|---|---|
 | **Unlock** | Passphrase or fingerprint, then a 4-digit PIN on Enigma's own number pad. 5 wrong PINs or the panic PIN erase everything. | The phone at rest |
 | **Vault** | Identity keys, key pools, group secrets and opened history, AES-256-GCM encrypted under the vault master key. | The phone at rest |
-| **Joining in person** | QR code or NFC tap, matching check codes, owner-signed invitation encrypted only to the joining phone. | Who is trusted |
+| **Joining** | In person: QR code or NFC tap with matching check codes. From a distance: files tagged with a passphrase agreed by voice. The invitation is owner-signed and encrypted only to the joining phone. | Who is trusted |
 | **Group secret** | A 32-byte secret shared only by members, mixed into every message key. Outsiders cannot derive any key. | Keeps outsiders out |
 | **Per-recipient message key** | One-time key, used once and deleted. X25519 + ML-KEM-768 together, signed with Ed25519 + ML-DSA-65. | Each message in transit |
 
@@ -38,6 +38,8 @@ Signatures carry both halves: 64 bytes of Ed25519 followed by 3,309 bytes of ML-
 | Finds a flaw in ML-KEM or ML-DSA | Still protected | X25519 and Ed25519 still stand. The new algorithms are young, which is why they are paired. |
 | Group member who was not a recipient | Nothing readable | Has the group secret but not the recipients' one-time keys. |
 | Photographs the joining QR code | Nothing readable | The QR key only protects the local link; the invitation is encrypted to the joining phone, and the check codes would not match. |
+| Reads the joining files in Signal | Nothing readable | The request is public keys only; the invitation is encrypted to the joining phone. Swapping either file fails the passphrase tag. |
+| Copies a request file and guesses the passphrase | Hard, and time-limited | Each guess costs 310,000 rounds of PBKDF2-SHA-256 and a four-word phrase is required; the guess must succeed before the owner accepts the real request, which then works once. |
 | Steals a locked phone | Nothing readable | Needs passphrase or fingerprint, plus the PIN. |
 | Copies the app's files off the phone | Nothing readable | The vault needs both steps, and the unlock files are wrapped by a key that cannot leave the phone's security hardware. |
 | Steals the phone later and breaks in | New messages only | Old messages' one-time keys are gone. Stored history and future messages are exposed, and the thief can pose as you until you start fresh and rejoin. |
@@ -84,7 +86,7 @@ No protection is promised for plaintext on a compromised unlocked phone, a recip
 - Signatures: Ed25519 (64 bytes) followed by ML-DSA-65 (FIPS 204, 3,309 bytes). Both must verify. Backup and one-time keys carry an Ed25519 signature only, to keep key pools small, and only travel inside packets with a hybrid signature or inside the owner-signed roster.
 - Content: AES-256-GCM with fresh nonces and 128-bit tags. HKDF-SHA-256 for derivation. Bouncy Castle 1.86 supplies the primitives; no global provider is installed.
 - Randomness: Android SecureRandom is the foundation. Camera digests (at setup and group creation) and accelerometer and gyroscope readings (while unlocked) are mixed in with HKDF. They can only add unpredictability; they are not a measured entropy guarantee. The vault master key and the PIN salt use SecureRandom only.
-- Formats: ENG5 (messages, file `.enigma` or `ENG5:` text), QKJ4 / QKG4 / QKA4 (joining request, invitation, receipt), QKB1 (the QR/NFC bootstrap), EJW1 (local joining frames), vault format 3. Big-endian numbers, Java modified UTF-8 strings, length-prefixed bounded blobs, strict versions and trailing-data checks.
+- Formats: ENG5 (messages, file `.enigma` or `ENG5:` text), QKJ4 / QKG4 / QKA4 (joining request, invitation, receipt), EJP1 (passphrase tag on remote joining files), QKB1 (the QR/NFC bootstrap), EJW1 (local joining frames), vault format 3. Big-endian numbers, Java modified UTF-8 strings, length-prefixed bounded blobs, strict versions and trailing-data checks.
 - Limits: 50 MiB content, up to 50 recipients and 30 devices per group. Outer message header 256 KiB, inner header 2 MiB, per-recipient entry 4,096 bytes. Join request 64,000, invitation 600,000, receipt 200,000 characters, roster 256 KiB. Whole message content is held in memory while sealing or opening (no chunked streaming yet).
 - Public fingerprints are the SHA-256 of all three public keys (2,016 bytes).
 
@@ -92,9 +94,9 @@ A file or text that cannot be parsed (older format, other keys, damaged) opens n
 
 ## Owner-managed joining and trust
 
-The joining phone makes a signed QKJ4 request: its public keys, name, a random 16-byte request ID, its backup key and 20 reserve public keys for the owner to hand to later members, with a five-minute lifetime. The owner confirms in person, then sends a QKG4 invitation: the group secret, settings, an owner-signed roster, and 100 one-time public keys for the joiner. The invitation is encrypted to the joining phone only, with X25519 (ephemeral and static) plus ML-KEM-768 to the joiner's backup key (info "Enigma/invite/v4"), and carries the owner's hybrid signature. The joiner verifies the request, owner, lifetime and roster before committing trust, then returns a signed QKA4 receipt with 100 one-time public keys for the owner. A receipt cannot add members.
+The joining phone makes a signed QKJ4 request: its public keys, name, a random 16-byte request ID, its backup key and 20 reserve public keys for the owner to hand to later members, with a signed lifetime of five minutes (nearby) or seven days (remote files). The owner confirms in person or by passphrase, then sends a QKG4 invitation: the group secret, settings, an owner-signed roster, and 100 one-time public keys for the joiner. The invitation is encrypted to the joining phone only, with X25519 (ephemeral and static) plus ML-KEM-768 to the joiner's backup key (info "Enigma/invite/v4"), and carries the owner's hybrid signature. The joiner verifies the request, owner, lifetime and roster before committing trust, then returns a signed QKA4 receipt with 100 one-time public keys for the owner (nearby only; with remote files the first verified message confirms joining). A receipt cannot add members.
 
-The first owner identity is authenticated by the physical pairing context. Nearby joining pins the owner fingerprint carried in the scanned QKB1 code; manual transfer relies on comparing a six-digit check code. Neither establishes a person's real-world identity or stops someone presenting an entirely different owner's code during first pairing. A photograph of a request is not proof of live presence, but the invitation can be decrypted only with the joiner's private keys and accepted only in that active request. An authorized or compromised member can redistribute the group secret; software cannot stop this.
+The first owner identity is authenticated by the physical pairing context. Nearby joining pins the owner fingerprint carried in the scanned QKB1 code; remote joining relies on a passphrase both people agreed by voice. Neither establishes a person's real-world identity or stops someone presenting an entirely different owner's code during first pairing. A photograph of a request is not proof of live presence, but the invitation can be decrypted only with the joiner's private keys and accepted only in that active request. An authorized or compromised member can redistribute the group secret; software cannot stop this.
 
 The owner-signed roster pins group, owner, expiry, distinct member keys and names, and increasing revisions. Updates verify against the pinned owner key; old revisions do not roll back trust and conflicting equal revisions fail. When a member joins later, the owner's roster introduces them to existing members with one reserve key each way, so they can message each other at full protection from the first message. The roster travels inside messages, so devices learn of changes only when a message reaches them; there is no network synchronisation or immediate group-wide revocation.
 
@@ -108,7 +110,7 @@ During nearby joining the group secret is protected by three independent layers,
 2. **One-time transport key (KEK):** 32 random bytes made by the owner per invitation and carried only in the single QR/NFC tap. HKDF-SHA-256 derives the EJW1 frame key; every frame is AES-256-GCM with a fresh nonce and authenticated header. A spoofed hotspot or on-path device without the KEK cannot read or alter frames.
 3. **Recipient encryption (QKG4):** encrypted to the joining phone's own X25519 and ML-KEM keys and signed by the owner. Someone who photographed the QR and knows the KEK still cannot decrypt it, and cannot forge one, because the recipient refuses an invitation whose owner differs from the fingerprint in the scanned code.
 
-Manual file transfer omits layers 1 and 2 and relies on layer 3 plus the check code, so those files can travel over any medium.
+Remote joining by file omits layers 1 and 2 and relies on layer 3 plus the passphrase tag, so those files can travel over any medium.
 
 ### Nearby joining: single QR or NFC tap, then Wi-Fi
 
@@ -122,9 +124,11 @@ EJW1 framing has magic, mode, packet type, strict per-direction sequence and bou
 
 Android needs Location (Android 8-12) or Nearby Wi-Fi devices (13+, flagged neverForLocation) permission to start the local-only hotspot. Enigma asks only when inviting and never reads location or scan results. IP addresses, timing and sizes remain visible on the local network.
 
-### Manual file transfer
+### Remote joining by file (1.1.0)
 
-The joiner saves its signed request as a text file; the owner opens it, approves and saves the recipient-encrypted invitation; the joiner opens it and may save a signed receipt. Both screens show a six-digit check code, SHA-256("Enigma/manual-check/v1" || request || owner public key); compare it in person or on a call. Request files expire five minutes after creation.
+For people who are not together. Both agree a passphrase by voice (at least four words and 16 letters; case, spaces and dashes are ignored). The joiner makes a signed QKJ4 request with a seven-day lifetime and derives K = PBKDF2-HMAC-SHA-256(passphrase, SHA-256("Enigma/join-phrase/v1" || request), 310,000 iterations, 256 bits). It shares `EJP1:` + HMAC-SHA-256(K, "Enigma/join-phrase/request" || 0 || request) + "." + request, and keeps K in the encrypted vault. The owner types the passphrase, derives the same K from the received request, and refuses the file unless the tag matches. The owner's invitation (QKG4, unchanged: encrypted to the joiner and owner-signed) is tagged the same way with the label "invitation"; the joiner refuses it unless the tag matches K. The labels stop a request tag being replayed as an invitation tag.
+
+The tag only authenticates; it adds no secrecy, which comes from QKG4. Its job is what the check code did: without it, someone who swapped the request would be invited in the friend's place, and someone who swapped the invitation would make the friend trust an impostor owner. An attacker who copies the request can guess passphrases offline, but must find it before the owner accepts the real request; each request ID works once. Files are shared through Android's share sheet as `.enigma` files and open from Signal or any app (after unlock). The first verified message from the new member marks them Joined and clears the cached invitation; there is no confirmation file.
 
 ## Unlock, PIN and stored-data protection
 
@@ -177,6 +181,7 @@ Reset requires a fresh passphrase and the exact typed RESET, then calls Android'
 - Someone who controls the phone at root level and also has the passphrase or a fingerprint can bypass the wrong-PIN count: root can use (not extract) the Keystore key to read pin.qkp and then try all 10,000 PINs, each costing one Argon2id run. The PIN protects a phone that is handed over or taken while running the normal Android system.
 - Backup and one-time keys carry an Ed25519 signature only. A group owner who could also forge Ed25519 could swap another member's keys in a roster; that needs an insider and a broken Ed25519, and reading messages would still need X25519 or ML-KEM to fail as well.
 - AES-256-GCM is the only content cipher. It is not considered at risk from quantum computers, so no second symmetric layer was added.
+- Remote joining is only as strong as the passphrase and the channel it was agreed on. A short or guessable phrase, or one sent in the same chat as the files, lets someone who sees the files swap them.
 - Physical vendor behaviour (hotspot start, network-request prompt, NFC card emulation) is a manual check, not emulator evidence.
 
 ## Primary references

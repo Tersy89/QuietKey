@@ -1,3 +1,37 @@
+Enigma 1.1.0 - 31 October 2026
+
+Owner request: joining from a distance over Signal was clunky and the five-minute request expired too
+soon; use a passphrase instead and make it easier. Changes (versionCode 14): remote joining files carry
+an EJP1 HMAC-SHA-256 tag keyed by PBKDF2-SHA-256 (310,000 iterations) of a passphrase agreed by voice
+(JoinPhrase); remote requests last seven days (nearby stays five minutes); request and invitation are
+shared through the Android share sheet and open from Signal or any app; the confirmation file was
+removed (the first verified message marks the member Joined and clears the cached invitation).
+
+Executed on this PC (Windows, JDK 17, Gradle 8.9, AGP 8.7.3, SDK 35):
+- gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest lintDebug: success.
+- 73 JVM unit tests, 0 failures (new JoinPhraseTest, 5 tests: full remote exchange with the phrase
+  typed differently, wrong phrase refused on both sides, swapped request and request-tag-as-
+  invitation refused, untagged files and weak phrases refused, seven-day request works once).
+  Lint: 0 errors, 32 warnings.
+Executed on two read-only instances of the disposable EnigmaShots emulator (API 35), seeded by
+ScreenshotTest (the joining instance after pm clear, so it had its own identity), driven with
+uiautomator; files moved between them with adb in place of Signal:
+- Joiner: By Signal or file: make my request; "tiger nine" refused; a four-word phrase accepted;
+  Share opened the system share sheet with enigma-join-request.enigma.
+- Owner: the request opened through an ACTION_VIEW content:// intent (as a tap in Signal does),
+  after unlock asked which of two owned groups; a wrong phrase was refused ("The passphrase does not
+  match..."); the request also opened through Invite new recipient -> By Signal or file; the right
+  phrase typed in different case with dashes matched; Invite -> Share made the invitation.
+- Joiner: the invitation opened through ACTION_VIEW after unlock; Join; the group appeared with 4
+  members. A message from the joiner opened on the owner as "Sender verified", and Manage members
+  then showed the joiner as Joined.
+Not run: the real Signal app; two physical phones; Save file -> USB on a phone; an expired seven-day
+request; nearby joining on the 1.1.0 build (code unchanged). Not an independent security audit.
+Enigma.apk (repository root): app.quietkey.debug 1.1.0-debug, versionCode 14, 6355050 bytes,
+SHA-256 6D9F1DCBBC32DE8D04D7F33671EC218E673851FAB6387C14FCE243F4C4F36E8E.
+
+----------------------------------------------------------------------------------------------
+
 Documentation update for 1.0.0 - 30 October 2026
 
 README.md, SECURITY.md and SYSTEM_DESIGN.md were rewritten to describe only the 1.0.0 design (hybrid

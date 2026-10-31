@@ -98,7 +98,7 @@ public final class MainActivity extends FragmentActivity {
         });
         qrScanner=registerForActivityResult(new ScanContract(),result->{returnedFromHandoff();String code=result.getContents();if(code!=null&&vault!=null&&nearbyJoin!=null&&!nearbyJoin.closed()&&nearbyJoin.recipient())nearbyJoin.bootstrap(code);});
         permissions=registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(),granted->{returnedFromHandoff();Runnable next=afterPermission;afterPermission=null;if(vault==null||next==null)return;
-            if(!granted.isEmpty()&&!granted.containsValue(false))next.run();else error(Build.VERSION.SDK_INT>=33?"Enigma needs Nearby devices permission to run its joining hotspot. Use Same Wi-Fi or Manual transfer instead.":"Android requires Location permission (and Location turned on) for the joining hotspot. Use Same Wi-Fi or Manual transfer instead.");});
+            if(!granted.isEmpty()&&!granted.containsValue(false))next.run();else error(Build.VERSION.SDK_INT>=33?"Enigma needs Nearby devices permission to run its joining hotspot. Use Same Wi-Fi or By Signal or file instead.":"Android requires Location permission (and Location turned on) for the joining hotspot. Use Same Wi-Fi or By Signal or file instead.");});
         importJoin=registerForActivityResult(new ActivityResultContracts.OpenDocument(),uri->{returnedFromHandoff();if(uri!=null&&vault!=null)importedJoinFile(uri);});
         exportJoin=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{returnedFromHandoff();if(result.getResultCode()==RESULT_OK&&result.getData()!=null&&result.getData().getData()!=null&&vault!=null)writeJoinExport(result.getData().getData());else pendingJoinExport=null;});
         openFile=registerForActivityResult(new ActivityResultContracts.OpenDocument(),uri->{
@@ -239,12 +239,11 @@ public final class MainActivity extends FragmentActivity {
         if(g!=null){
             options.add(new String[]{"Nearby: scan or tap","They scan the QR code this phone shows, or hold their phone to the back of this one. Uses a private hotspot."});actions.add(()->withJoinPermission(()->startNearby(g,false)));
             options.add(new String[]{"Nearby on the same Wi-Fi","Use when both phones are already on the same private Wi-Fi."});actions.add(()->startNearby(g,true));
-            options.add(new String[]{"By file: open their request","Manual, e.g. over USB. They save a request file and copy it to this phone."});actions.add(()->manualImport("invite",g));
-            options.add(new String[]{"By file: open their confirmation","Last manual step, after they have joined."});actions.add(()->manualImport("receipt",g));
+            options.add(new String[]{"By Signal or file: open their request","For someone who is not here. They send a request file, for example in Signal; tapping it there opens it in Enigma too. You both type a passphrase you agreed by voice."});actions.add(()->manualImport("invite",g));
         }else{
             options.add(new String[]{"Nearby: scan or tap","The owner chooses Invite new recipient → Nearby: scan or tap and shows a QR code. Scan it, or hold the phones back to back."});actions.add(()->startNearby(null,false));
-            options.add(new String[]{"By file: save my request","Manual, e.g. over USB. Copy the file to the owner's phone."});actions.add(this::manualRequest);
-            options.add(new String[]{"By file: open the owner's invitation","The file the owner sent back."});actions.add(()->manualImport("join",null));
+            options.add(new String[]{"By Signal or file: make my request","For an owner who is not here. Agree a passphrase by voice, then send the request file, for example in Signal."});actions.add(this::manualRequest);
+            options.add(new String[]{"By Signal or file: open the invitation","The file the owner sent back. Tapping it in Signal opens it in Enigma too."});actions.add(()->manualImport("join",null));
         }
         choices(g==null?"Join a group":"Invite to "+g.name,options,actions);
     }
@@ -307,48 +306,73 @@ public final class MainActivity extends FragmentActivity {
     /** Commits a verified, confirmed invitation and returns the signed receipt. Runs on the worker. */
     private String commitJoin(Protocol.Group candidate,String request)throws Exception{
         JoinProtocol.Request r=JoinProtocol.parseRequest(request);if(!request.equals(vault.joiningRequest)||vault.pairingUsed.contains(r.id))throw new SecurityException("Joining session changed. Start again.");
-        if(group(candidate.id)!=null||vault.groups.size()>=30)throw new SecurityException("Group cannot be added");String receipt=JoinProtocol.receipt(candidate,r.id,vault.identity,vault.pools,entropy);vault.groups.add(candidate);vault.pairingUsed.add(r.id);vault.joiningRequest="";persist();return receipt;
+        if(group(candidate.id)!=null||vault.groups.size()>=30)throw new SecurityException("Group cannot be added");String receipt=JoinProtocol.receipt(candidate,r.id,vault.identity,vault.pools,entropy);vault.groups.add(candidate);vault.pairingUsed.add(r.id);vault.joiningRequest="";vault.joiningKey="";persist();return receipt;
     }
     private void cancelNearbyApprovals(){for(CompletableFuture<?> approval:nearbyApprovals)approval.completeExceptionally(new SecurityException("Joining closed"));nearbyApprovals.clear();if(nearbyConsent!=null){nearbyConsent.dismiss();nearbyConsent=null;}Protocol.Group candidate=nearbyCandidate;Vault current=vault;nearbyCandidate=null;if(candidate!=null&&!worker.isShutdown())worker.execute(()->{if(current==null||!current.groups.contains(candidate))Arrays.fill(candidate.seed,(byte)0);});}
     private void stopNearby(){NearbyJoinDialog previous=nearbyJoin;nearbyJoin=null;if(previous!=null){previous.close();if(previous.isShowing())previous.dismiss();}cancelNearbyApprovals();}
 
-    // Manual transfer: the same signed request, recipient-encrypted invitation and signed receipt, carried as small text files (USB cable, SD card, any file transfer).
+    // Remote joining by file (Signal, email, USB): the same signed request and recipient-encrypted invitation, each tagged with a passphrase both people agreed by voice. The first verified message confirms joining.
     private void manualRequest(){
-        work(()->{vault.joiningRequest=JoiningFlow.request(vault.identity,vault.pools,entropy,vault.deviceName,vault.joiningRequest,vault.pairingUsed,false);persist();return vault.joiningRequest;},
-            request->exportJoin("enigma-join-request.txt",request,"Request saved","Copy this file to the owner's phone, for example over a USB cable through a computer. It contains only your public keys and device name.\n\nThe owner opens it with Invite new recipient → By file: open their request, and sends back an invitation file. Then open that here with Join group → By file: open the owner's invitation.\n\nThe request expires five minutes after it was made. Save it again for a fresh one if needed."));
+        askPhrase("Join by Signal or file","Agree a passphrase with the group owner on a call or in person, at least "+JoinPhrase.MIN_WORDS+" words. Do not send it in the same chat as the files.\n\nYou both type it; a swapped or changed file is then refused.",phrase->
+            work(()->{String request=JoinProtocol.request(vault.identity,vault.pools,entropy,vault.deviceName,JoinProtocol.FILE_WINDOW);byte[] key=JoinPhrase.key(phrase,request);
+                try{vault.joiningRequest=request;vault.joiningKey=Protocol.b64(key);persist();return JoinPhrase.seal(key,JoinPhrase.REQUEST,request);}finally{Arrays.fill(key,(byte)0);}},
+                packet->shareJoin("enigma-join-request.enigma",packet,"Request ready","Send this file to the group owner, for example in Signal. It holds only your public keys and device name.\n\nThey open it in Enigma, type the passphrase and send back an invitation. Tap that file to open it in Enigma.\n\nThe request lasts 7 days and works once.")));
     }
     private void manualImport(String action,Protocol.Group g){manualAction=action;manualGroupId=g==null?null:g.id;beginHandoff();importJoin.launch(new String[]{"text/plain","application/octet-stream","*/*"});}
     private void importedJoinFile(Uri uri){
         String action=manualAction;Protocol.Group g=group(manualGroupId);
-        work(()->{try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Could not open that file");ByteArrayOutputStream bytes=new ByteArrayOutputStream();copy(in,bytes,80000);return Packets.clean(new String(bytes.toByteArray(),java.nio.charset.StandardCharsets.US_ASCII));}},
-            packet->{if("join".equals(action))manualJoin(packet);else if(g!=null&&"invite".equals(action))manualInvite(g,packet);else if(g!=null&&"receipt".equals(action))manualReceipt(g,packet);else error("Joining interrupted. Start again from Groups.");});
+        work(()->{try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Could not open that file");ByteArrayOutputStream bytes=new ByteArrayOutputStream();copy(in,bytes,JoinProtocol.MAX_INVITATION+1000);return Packets.clean(new String(bytes.toByteArray(),java.nio.charset.StandardCharsets.US_ASCII));}},
+            packet->{if("join".equals(action))manualJoin(packet);else if(g!=null&&"invite".equals(action))manualInvite(g,packet);else error("Joining interrupted. Start again from Groups.");});
+    }
+    /** A joining file opened from Signal or another app: a request goes to an owned group, an invitation to this phone's waiting request. */
+    private void openJoinFile(String packet){
+        String inside;try{inside=JoinPhrase.inner(packet);}catch(Exception e){error(e.getMessage());return;}
+        if(inside.startsWith(JoinProtocol.INVITATION)){manualJoin(packet);return;}
+        if(!inside.startsWith(JoinProtocol.REQUEST)){error("That is not an Enigma joining file.");return;}
+        ArrayList<Protocol.Group> owned=new ArrayList<>();for(Protocol.Group g:vault.groups)if(isOwner(g))owned.add(g);
+        if(owned.isEmpty()){error("This is a request to join a group, but this phone owns no group. Create a group, then open the file again.");return;}
+        if(owned.size()==1){manualInvite(owned.get(0),packet);return;}
+        ArrayList<String[]> options=new ArrayList<>();ArrayList<Runnable> actions=new ArrayList<>();
+        for(Protocol.Group g:owned){options.add(new String[]{g.name,g.members.size()+" members"});actions.add(()->manualInvite(g,packet));}
+        choices("Invite to which group?",options,actions);
     }
     private void manualInvite(Protocol.Group g,String packet){
-        if(!packet.startsWith(JoinProtocol.REQUEST)){error("That is not an Enigma joining request file.");return;}
-        work(()->new Object[]{JoinProtocol.parseRequest(packet),JoinBootstrap.manualCheckCode(packet,vault.identity.publicKey)},value->{JoinProtocol.Request request=(JoinProtocol.Request)value[0];String check=(String)value[1];
-            transientDialog=new AlertDialog.Builder(this).setTitle("Invite "+request.name+"?").setMessage("Check code\n"+check+"\n\nTheir phone shows this code when they open your invitation. Compare it with them in person or on a call before they join.\n\nDevice fingerprint\n"+pretty(request.key.fingerprint())).setNegativeButton("Cancel",null)
-                .setPositiveButton("Invite",(d,w)->work(()->{String grant=JoiningFlow.invite(g,packet,vault.identity,vault.pools,entropy,vault.pairingUsed,vault.pendingInvites,vault.invitationCache);persist();return grant;},
-                    grant->{selected=g;chooseDefaultRecipient();page="group-details";render();exportJoin("enigma-invitation.txt",grant,"Invitation ready","Copy this file to "+request.name+"'s phone. It is encrypted so only that phone can open it, and signed by this phone.\n\nCheck code: "+check+"\n\nThey stay Invited until their first verified message or their confirmation file.");})).show();});
+        String request;try{request=JoinPhrase.inner(packet);}catch(Exception e){error(e.getMessage());return;}
+        if(!request.startsWith(JoinProtocol.REQUEST)){error("That is not an Enigma joining request file.");return;}
+        askPhrase("Invite to "+g.name,"Type the passphrase you agreed with them. Enigma refuses the request if it does not match.",phrase->
+            work(()->{byte[] key=JoinPhrase.key(phrase,request);try{JoinPhrase.open(key,JoinPhrase.REQUEST,packet);return new Object[]{JoinProtocol.parseRequest(request),key.clone()};}finally{Arrays.fill(key,(byte)0);}},value->{JoinProtocol.Request r=(JoinProtocol.Request)value[0];byte[] key=(byte[])value[1];
+                transientDialog=new AlertDialog.Builder(this).setTitle("Invite "+r.name+"?").setMessage("The passphrase matches, so this request came from someone who knows it.\n\nAdd this device to "+g.name+".\n\nDevice fingerprint\n"+pretty(r.key.fingerprint())).setOnDismissListener(d->Arrays.fill(key,(byte)0)).setNegativeButton("Cancel",null)
+                    .setPositiveButton("Invite",(d,w)->{byte[] copy=key.clone();work(()->{try{String grant=JoiningFlow.invite(g,request,vault.identity,vault.pools,entropy,vault.pairingUsed,vault.pendingInvites,vault.invitationCache);persist();return JoinPhrase.seal(copy,JoinPhrase.INVITATION,grant);}finally{Arrays.fill(copy,(byte)0);}},
+                        grant->{selected=g;chooseDefaultRecipient();page="group-details";render();shareJoin("enigma-invitation.enigma",grant,"Invitation ready","Send this file back to "+r.name+", for example in Signal. It is encrypted so only their phone can open it, signed by this phone and tagged with your passphrase.\n\nThey show as Invited until their first message reaches you.");});}).show();}));
     }
     private void manualJoin(String packet){
-        if(!packet.startsWith(JoinProtocol.INVITATION)){error("That is not an Enigma invitation file.");return;}
-        work(()->{if(vault.joiningRequest.isEmpty())throw new SecurityException("Save your request file first: Join group → By file: save my request");String request=vault.joiningRequest;JoinProtocol.Request r=JoinProtocol.parseRequest(request);
-            if(vault.pairingUsed.contains(r.id))throw new SecurityException("This request was already used. Save a fresh request file.");Protocol.Group candidate=JoinProtocol.accept(packet,request,vault.identity,vault.pools);
+        String invitation;try{invitation=JoinPhrase.inner(packet);}catch(Exception e){error(e.getMessage());return;}
+        if(!invitation.startsWith(JoinProtocol.INVITATION)){error("That is not an Enigma invitation file.");return;}
+        work(()->{if(vault.joiningRequest.isEmpty()||vault.joiningKey.isEmpty())throw new SecurityException("This phone has no request waiting. Make one first: Groups → Join group → By Signal or file.");String request=vault.joiningRequest;JoinProtocol.Request r=JoinProtocol.parseRequest(request);
+            if(vault.pairingUsed.contains(r.id))throw new SecurityException("This request was already used. Make a fresh request.");
+            byte[] key=Protocol.un64(vault.joiningKey);try{JoinPhrase.open(key,JoinPhrase.INVITATION,packet);}finally{Arrays.fill(key,(byte)0);}
+            Protocol.Group candidate=JoinProtocol.accept(invitation,request,vault.identity,vault.pools);
             if(group(candidate.id)!=null||vault.groups.size()>=30){Arrays.fill(candidate.seed,(byte)0);throw new SecurityException("Group already exists or group limit reached; history was preserved");}
-            return new Object[]{candidate,request,JoinBootstrap.manualCheckCode(request,Identity.Public.decode(Protocol.un64(candidate.members.get(candidate.owner))))};
-        },value->{Protocol.Group candidate=(Protocol.Group)value[0];String request=(String)value[1],check=(String)value[2];
-            transientDialog=new AlertDialog.Builder(this).setTitle("Join "+candidate.name+"?").setMessage("Check code\n"+check+"\n\nThe owner saw this code when inviting you. Join only if it matches what they read to you.\n\n"+candidate.members.size()+" member public keys will be added together.\n\nOwner fingerprint\n"+pretty(candidate.owner))
+            return new Object[]{candidate,request};
+        },value->{Protocol.Group candidate=(Protocol.Group)value[0];String request=(String)value[1];
+            transientDialog=new AlertDialog.Builder(this).setTitle("Join "+candidate.name+"?").setMessage("The passphrase matches, so this invitation came from someone who knows it.\n\n"+candidate.members.size()+" member public keys will be added together.\n\nOwner fingerprint\n"+pretty(candidate.owner))
                 .setNegativeButton("Decline",(d,w)->Arrays.fill(candidate.seed,(byte)0)).setOnCancelListener(d->Arrays.fill(candidate.seed,(byte)0))
-                .setPositiveButton("Codes match · Join",(d,w)->work(()->commitJoin(candidate,request),receipt->{selected=candidate;chooseDefaultRecipient();page="groups";render();
-                    transientDialog=new AlertDialog.Builder(this).setTitle("Joined "+candidate.name).setMessage("Group details and member keys are ready. Your first verified message confirms joining to the owner, or save a confirmation file for them now.").setPositiveButton("Done",null).setNeutralButton("Save confirmation file",(x,y)->exportJoin("enigma-joined.txt",receipt,"Confirmation saved","Copy this file to the owner. They open it with Invite new recipient → By file: open their confirmation.")).show();})).show();});
+                .setPositiveButton("Join",(d,w)->work(()->commitJoin(candidate,request),receipt->{selected=candidate;chooseDefaultRecipient();page="groups";render();
+                    transientDialog=new AlertDialog.Builder(this).setTitle("Joined "+candidate.name).setMessage("Group details and member keys are ready. Send the owner a message: when it reaches them, they see you as Joined.").setPositiveButton("Done",null).show();})).show();});
     }
-    private void manualReceipt(Protocol.Group g,String packet){
-        if(!packet.startsWith(JoinProtocol.RECEIPT)){error("That is not an Enigma confirmation file.");return;}
-        work(()->{String member=JoinProtocol.receiptMember(g,packet,vault.pendingInvites,vault.pools);vault.invitationCache.entrySet().removeIf(entry->!vault.pendingInvites.containsKey(entry.getKey()));persist();return member;},id->{render();Toast.makeText(this,memberName(g,id)+" joined",Toast.LENGTH_LONG).show();});
+    private void askPhrase(String title,String explanation,NameAction action){
+        LinearLayout view=column();view.setPadding(dp(20),dp(4),dp(20),0);view.addView(label(explanation,14,MUTED));
+        EditText phrase=editor("Passphrase, e.g. orange tiger harbour nine",false);limit(phrase,200);view.addView(phrase);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(title).setView(view).setNegativeButton("Cancel",null).setPositiveButton("Continue",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{String value=phrase.getText().toString();try{JoinPhrase.requireStrong(value);}catch(Exception e){phrase.setError(e.getMessage());return;}phrase.setText("");dialog.dismiss();action.run(value);}));
+        transientDialog=dialog;dialog.show();
     }
-    private void exportJoin(String name,String packet,String title,String explanation){
-        transientDialog=new AlertDialog.Builder(this).setTitle(title).setMessage(explanation).setPositiveButton("Save file",(d,w)->{pendingJoinExport=packet;beginHandoff();exportJoin.launch(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/plain").putExtra(Intent.EXTRA_TITLE,name));})
-            .setNeutralButton("Copy text",(d,w)->{((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Enigma joining",packet));Toast.makeText(this,"Copied",Toast.LENGTH_SHORT).show();}).setNegativeButton("Close",null).show();
+    private void shareJoin(String name,String packet,String title,String explanation){
+        transientDialog=new AlertDialog.Builder(this).setTitle(title).setMessage(explanation)
+            .setPositiveButton("Share",(d,w)->work(()->{File directory=new File(getCacheDir(),"encrypted");if(!directory.exists()&&!directory.mkdirs())throw new IOException("Could not prepare file storage");File file=new File(directory,name);
+                try(OutputStream out=new FileOutputStream(file)){out.write(packet.getBytes(java.nio.charset.StandardCharsets.US_ASCII));}return file;},file->{beginHandoff(JoinProtocol.WINDOW);Uri uri=FileProvider.getUriForFile(this,getPackageName()+".files",file);
+                Intent share=new Intent(Intent.ACTION_SEND).setType("application/octet-stream").putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);share.setClipData(ClipData.newRawUri(name,uri));startActivity(Intent.createChooser(share,title));}))
+            .setNeutralButton("Save file",(d,w)->{pendingJoinExport=packet;beginHandoff();exportJoin.launch(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,name));}).setNegativeButton("Close",null).show();
     }
     private void writeJoinExport(Uri uri){
         String packet=pendingJoinExport;pendingJoinExport=null;if(packet==null)return;
@@ -481,7 +505,9 @@ public final class MainActivity extends FragmentActivity {
         work(()->openPacket(SealedProtocol.fromText(text)),value->{if(message!=null)message.setText("");showOpened(value);});
     }
     private void receiveFile(Uri uri){
-        work(()->{try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Could not open that file");ByteArrayOutputStream b=new ByteArrayOutputStream();copy(in,b,SealedProtocol.MAX_CONTENT+1024*1024);return openPacket(b.toByteArray());}},this::showOpened);
+        work(()->{try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Could not open that file");ByteArrayOutputStream b=new ByteArrayOutputStream();copy(in,b,SealedProtocol.MAX_CONTENT+1024*1024);byte[] bytes=b.toByteArray();
+            if(bytes.length>=JoinPhrase.PREFIX.length()&&new String(bytes,0,JoinPhrase.PREFIX.length(),java.nio.charset.StandardCharsets.US_ASCII).equals(JoinPhrase.PREFIX))return Packets.clean(new String(bytes,java.nio.charset.StandardCharsets.US_ASCII));return openPacket(bytes);}},
+            value->{if(value instanceof String)openJoinFile((String)value);else showOpened((Object[])value);});
     }
     /**
      * Opens a received package on the worker. Order matters: verify and decrypt without changing
@@ -497,7 +523,7 @@ public final class MainActivity extends FragmentActivity {
         MessageRecord record=new MessageRecord(o.messageId,g.id,o.sender,ownId,o.viewOnce?"once":"file",plain,o.name,o.mime,"",o.createdAt,o.expiresAt,false,o.reducedProtection());
         SealedProtocol.accept(g,vault.pools,o);
         JoinProtocol.Roster roster=JoinProtocol.openCarrier(g,o.carrier);if(roster!=null&&JoinProtocol.adopt(g,roster,vault.identity,vault.pools))pruneKeys();
-        g.seen.add(o.messageId);if(isOwner(g))g.memberStatus.put(o.sender,"Joined");remember(record);
+        g.seen.add(o.messageId);if(isOwner(g)){g.memberStatus.put(o.sender,"Joined");JoiningFlow.cancel(g.id,o.sender,vault.pendingInvites,vault.invitationCache);}remember(record);
         return new Object[]{record,o.body,preview(o.mime,o.name,o.body)};
     }
     /** Deletes keys of people who are no longer trusted members of any group here (removed, blocked or group deleted). */
@@ -609,7 +635,7 @@ public final class MainActivity extends FragmentActivity {
             {"2. Create or join a group","Owner: Groups → Create a group → open it → Invite new recipient. Recipient: Groups → Join group. Joining copies the group's secret and member keys to the new phone, encrypted so only that phone can open it."},
             {"3. Nearby joining (recommended)","Owner: Invite new recipient → Nearby: scan or tap. Enigma starts a private hotspot with no Internet and shows one QR code. Recipient: Join group → Nearby: scan or tap, then tap Scan QR code or hold the phones back to back, and allow the connection if Android asks. Both phones show a six-digit check code: the owner taps Invite only if both codes match, then the recipient taps Join group. Keep both apps open; the code works once and expires after five minutes."},
             {"4. Same Wi-Fi","If both phones are already on the same private Wi-Fi, the owner can choose Nearby on the same Wi-Fi instead. The recipient still uses Nearby: scan or tap."},
-            {"5. Manual transfer","For a USB cable or any file copy. Recipient: Join group → By file: save my request, and copy it to the owner. Owner: Invite new recipient → By file: open their request → Invite, then save the invitation file and copy it back. Recipient: Join group → By file: open the owner's invitation. Compare the six-digit check code in person or on a call before tapping Join."},
+            {"5. Joining from a distance","For someone who is not with you. First agree a passphrase of at least four words on a call or in person; never send it in the same chat as the files. Recipient: Join group → By Signal or file: make my request → type the passphrase → Share, and send the file to the owner (Signal, email, USB). Owner: tap the file in Signal (or Invite new recipient → By Signal or file: open their request), type the passphrase → Invite → Share, and send the invitation back. Recipient: tap the invitation to open it in Enigma → Join, then send the owner a message to finish. A request lasts 7 days and works once."},
             {"6. Send","Messages → Send → type a message or choose a file → choose the group → tick one or more people → Encrypt & share. Enigma makes one .enigma file only they can open; send it with any app or over USB. Send as text instead makes a block of text for a chat. Expiry and View once are optional. Each message uses a one-time key that is deleted after reading; Reduced protection means none were left, and they refill as people reply."},
             {"7. Receive","Tap the .enigma file in your messenger and choose Enigma, or Messages → Receive → Open .enigma file. Enigma finds the group, checks the sender and shows photos and text inside the app. A message opens once from its file; after that it is kept encrypted under Messages. Save to device asks for your passphrase; that copy is outside Enigma. Pasted text works too."},
             {"8. Unlock and reset","Unlocking takes your passphrase or fingerprint, then your 4-digit PIN. 5 wrong PINs, or the panic PIN (9999 until you change it), erase Enigma's keys and data at once. Device → Security & unlock enables fingerprint unlock and changes the passphrase, PIN or panic PIN. Backgrounding locks Enigma. Device → Reset app & delete local data requires the passphrase and typed RESET; it deletes local keys/groups/history. There is no recovery."}

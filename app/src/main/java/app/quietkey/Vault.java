@@ -36,6 +36,8 @@ public final class Vault implements AutoCloseable {
     public boolean setupCompleted;
     public long setupCapturedAt;
     public String joiningRequest="";
+    /** Passphrase key for a remote (file) joining request, so the owner's invitation can be checked days later. */
+    public String joiningKey="";
     public final HashSet<String> pairingUsed=new HashSet<>();
     public final LinkedHashMap<String,String> pendingInvites=new LinkedHashMap<>();
     public final LinkedHashMap<String,JoiningFlow.Invitation> invitationCache=new LinkedHashMap<>();
@@ -61,9 +63,9 @@ public final class Vault implements AutoCloseable {
     /** Key for one history file: readable content is only ever stored encrypted under the master key. */
     public synchronized byte[] historyKey(String file) throws Exception { live(); if(master==null)throw new IllegalStateException("Set an app password first"); return Protocol.hkdf(master,file.getBytes(StandardCharsets.UTF_8),"Enigma/history-file/v1".getBytes(StandardCharsets.UTF_8)); }
     /** 0.6.0 → 0.7.0: after explicit confirmation, replace the RSA-era groups and history with a fresh start. */
-    public synchronized void startFresh() { live(); legacy=false; legacyRoot=null; for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0); groups.clear(); history.clear(); joiningRequest=""; pendingInvites.clear(); invitationCache.clear(); personalGroupId=null; setupCompleted=false; setupCapturedAt=0; if(identity!=null)identity.destroy(); identity=null; pools.destroy(); pools=new KeyPools(); }
+    public synchronized void startFresh() { live(); legacy=false; legacyRoot=null; for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0); groups.clear(); history.clear(); joiningRequest=""; joiningKey=""; pendingInvites.clear(); invitationCache.clear(); personalGroupId=null; setupCompleted=false; setupCapturedAt=0; if(identity!=null)identity.destroy(); identity=null; pools.destroy(); pools=new KeyPools(); }
     public synchronized byte[] copyMaster(){live();if(master==null)throw new IllegalStateException("Set an app password first");return master.clone();}
-    @Override public synchronized void close(){closed=true;if(master!=null)Arrays.fill(master,(byte)0);master=null;for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0);groups.clear();history.clear();joiningRequest="";pendingInvites.clear();invitationCache.clear();pairingUsed.clear();if(identity!=null)identity.destroy();identity=null;pools.destroy();legacyRoot=null;}
+    @Override public synchronized void close(){closed=true;if(master!=null)Arrays.fill(master,(byte)0);master=null;for(Protocol.Group g:groups)Arrays.fill(g.seed,(byte)0);groups.clear();history.clear();joiningRequest="";joiningKey="";pendingInvites.clear();invitationCache.clear();pairingUsed.clear();if(identity!=null)identity.destroy();identity=null;pools.destroy();legacyRoot=null;}
     private SecretKey storageKey() throws Exception { return (SecretKey) ks.getKey(STORAGE, null); }
     private void load() throws Exception {
         byte[] bytes = file.readFully();
@@ -83,7 +85,7 @@ public final class Vault implements AutoCloseable {
         setupCompleted=root.optBoolean("setupCompleted",false);
         personalGroupId=root.optString("personalGroupId",null);
         setupCapturedAt=root.optLong("setupCapturedAt",0);
-        joiningRequest=root.optString("joiningRequest","");
+        joiningRequest=root.optString("joiningRequest","");joiningKey=root.optString("joiningKey","");
         JSONArray used=root.optJSONArray("pairingUsed");if(used!=null){if(used.length()>10000)throw new SecurityException("Joining history full");for(int i=0;i<used.length();i++)pairingUsed.add(used.getString(i));}
         JSONObject pending=root.optJSONObject("pendingInvites");if(pending!=null){if(pending.length()>10000)throw new SecurityException("Too many invitations");Iterator<String> it=pending.keys();while(it.hasNext()){String id=it.next();pendingInvites.put(id,pending.getString(id));}}
         JSONObject invitations=root.optJSONObject("invitationCache");
@@ -133,7 +135,7 @@ public final class Vault implements AutoCloseable {
         root.put("personalGroupId",personalGroupId); root.put("setupCapturedAt",setupCapturedAt);
         if(invitationCache.size()>JoiningFlow.MAX_PENDING)throw new SecurityException("Too many saved invitations");
         JSONObject invitations=new JSONObject();for(Map.Entry<String,JoiningFlow.Invitation> entry:invitationCache.entrySet()){JoiningFlow.Invitation item=entry.getValue();JSONObject value=new JSONObject();value.put("request",item.request);value.put("group",item.group);value.put("member",item.member);value.put("packet",item.packet);value.put("expires",item.expires);value.put("revision",item.revision);invitations.put(entry.getKey(),value);}root.put("invitationCache",invitations);
-        root.put("joiningRequest",joiningRequest);root.put("pairingUsed",new JSONArray(new ArrayList<>(pairingUsed)));root.put("pendingInvites",new JSONObject(pendingInvites));
+        root.put("joiningRequest",joiningRequest);root.put("joiningKey",joiningKey);root.put("pairingUsed",new JSONArray(new ArrayList<>(pairingUsed)));root.put("pendingInvites",new JSONObject(pendingInvites));
         JSONArray messages=new JSONArray();for(MessageRecord message:history)messages.put(message.json());root.put("history",messages);
         write(root);
     }

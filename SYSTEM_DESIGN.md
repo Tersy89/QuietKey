@@ -1,6 +1,6 @@
 # Enigma system design
 
-Version: 1.0.0 (versionCode 13), a development prototype release. Updated: 30 October 2026.
+Version: 1.1.0 (versionCode 14), a development prototype release. Updated: 31 October 2026.
 
 This is the living description of the implemented system. Update it with the code whenever its architecture, workflows, security or limitations change. Test evidence belongs in VERIFICATION.txt; threat details belong in SECURITY.md. Planned work is listed separately at the end. Earlier versions (0.3 to 0.6.0) used RSA identities, QKD3/file-v3 packets and QKJ1/QKG2/QKA1 joining; those were removed in 0.7.0 and are described only in the change log.
 
@@ -24,6 +24,7 @@ Goals that must be kept: key generation uses OS randomness with live camera and 
 | SealedProtocol | ENG5 messages: one content key, per-recipient wrapping, signed inner header, refill keys and roster carrier |
 | JoinProtocol | QKJ4/QKG4/QKA4: request, recipient-encrypted invitation, receipt, owner-signed roster |
 | JoiningFlow | Fresh and resumed requests, bounded saved invitations, pending cleanup |
+| JoinPhrase | EJP1 passphrase tag for remote joining files: normalisation, strength rule, PBKDF2 key, HMAC seal/open |
 | JoinBootstrap | QKB1 single-QR/NFC packet, one-time KEK, transport key and check-code derivation, owner pinning |
 | NearbyJoinDialog, JoinNfcService, LocalJoinWire, LocalJoinSession, SecureCaptureActivity | Foreground nearby joining: local-only hotspot or same Wi-Fi, QR display and scan, NFC, EJW1 frames, ordering and approval |
 | Vault | Atomic encrypted storage of identity, pools, groups, rosters and history metadata; loaded secrets live only in an unlocked session |
@@ -78,7 +79,7 @@ Installs from before the PIN are asked to set one, with the passphrase, before a
 
 Leaving Enigma locks it, clears visible data and queues disposal of loaded secrets; screen-off always locks. Camera setup and document pickers get a two-minute allowance, scanning the joining code five minutes, the Wi-Fi prompt 90 seconds. A generation counter rejects results from an obsolete session. Fresh passphrase entry is required before readable-file export, reset, passphrase change and biometric configuration; Change PIN also asks for it. There is no passphrase recovery.
 
-## Joining: nearby (single QR or NFC tap, then Wi-Fi) and manual files
+## Joining: nearby (single QR or NFC tap, then Wi-Fi) and remote files
 
 Joining is a separate layer from message encryption. It delivers one group's secret, settings, owner-signed roster and key supplies to one approved device. Message keys are derived per message and never reuse joining keys.
 
@@ -104,29 +105,47 @@ sequenceDiagram
 2. One-time KEK from QKB1. HKDF-SHA-256(KEK, "Enigma/join-bootstrap/v1", "transport") keys every EJW1 frame (AES-256-GCM, fresh 12-byte nonce, header as AAD).
 3. QKG4 recipient encryption and owner signature: X25519 (ephemeral and static) plus ML-KEM-768 to the joiner's backup key (info "Enigma/invite/v4"), AES-GCM over group ID, name, expiry, secret, roster and key supply, header binding the owner key, B's fingerprint, request ID and lifetime. Holding the KEK does not open it. B refuses any invitation whose owner fingerprint differs from QKB1.
 
-QKJ4 carries B's public keys, name, a random 16-byte request ID, B's backup key and 20 reserve keys for the owner, and a signed five-minute lifetime. QKG4 carries 100 one-time public keys for B; QKA4 carries 100 for the owner. Packet limits: request 64,000, invitation 600,000, receipt 200,000 characters, roster 256 KiB.
+QKJ4 carries B's public keys, name, a random 16-byte request ID, B's backup key and 20 reserve keys for the owner, and a signed lifetime of exactly five minutes (nearby) or seven days (remote files); any other lifetime is refused. QKG4 carries 100 one-time public keys for B; QKA4 carries 100 for the owner. Packet limits: request 64,000, invitation 600,000, receipt 200,000 characters, roster 256 KiB.
 
 ### Owner side
 
-Groups → group → Invite new recipient offers, as app-styled buttons with one-line explanations: **Nearby: scan or tap** (recommended), **Nearby on the same Wi-Fi**, **By file: open their request** and **By file: open their confirmation**. Nearby asks for ACCESS_FINE_LOCATION+COARSE (API 26–32, maxSdkVersion 32) or NEARBY_WIFI_DEVICES with neverForLocation (33+) only when chosen, then NearbyJoinDialog calls WifiManager.startLocalOnlyHotspot. SSID/passphrase/security come from the reservation (SoftApConfiguration on 30+, WifiConfiguration before). The hotspot address is the private IPv4 that appears on a Wi-Fi/AP interface after start (polled up to six seconds; falls back to an address ending .1). Same-Wi-Fi mode uses the current Wi-Fi network's link address. A ServerSocket binds to that address only on port 45873 (ephemeral if busy) before QKB1 is built with the bound port.
+Groups → group → Invite new recipient offers, as app-styled buttons with one-line explanations: **Nearby: scan or tap** (recommended), **Nearby on the same Wi-Fi** and **By Signal or file: open their request**. Nearby asks for ACCESS_FINE_LOCATION+COARSE (API 26–32, maxSdkVersion 32) or NEARBY_WIFI_DEVICES with neverForLocation (33+) only when chosen, then NearbyJoinDialog calls WifiManager.startLocalOnlyHotspot. SSID/passphrase/security come from the reservation (SoftApConfiguration on 30+, WifiConfiguration before). The hotspot address is the private IPv4 that appears on a Wi-Fi/AP interface after start (polled up to six seconds; falls back to an address ending .1). Same-Wi-Fi mode uses the current Wi-Fi network's link address. A ServerSocket binds to that address only on port 45873 (ephemeral if busy) before QKB1 is built with the bound port.
 
 QKB1 ("bootstrap-v1", about 250 characters) contains mode, SSID, passphrase, security type, IPv4, port, KEK, owner fingerprint and expiry (five minutes). It is rendered as one QR (QrImage self-checked mask) and published to JoinNfcService. On Android 15+ the owner also calls NfcAdapter.setDiscoveryTechnology(FLAG_READER_DISABLE, FLAG_LISTEN_KEEP) while the code is shown (reset on every exit), so its own NFC poller cannot read the recipient phone and open Android's "Empty tag" screen, which would background and lock Enigma. The listener allows at most five failed initial connections with ten-second reads, accepts one verified request, clears the NFC payload, shows the check code in the Invite consent dialog and proceeds only on **Codes match · Invite**. JoiningFlow.invite persists the Invited grant before sending QKG4. The hotspot reservation, listener and KEK are released on success, Cancel, failure, lock or the five-minute deadline.
 
 ### Recipient side
 
-Groups → Join group offers **Nearby: scan or tap** (recommended), **By file: save my request** and **By file: open the owner's invitation**; the nearby screen's button is **Scan QR code**, matching the owner's on-screen instructions. Nearby creates a fresh signed QKJ4, then accepts QKB1 from the ZXing ScanContract (SecureCaptureActivity, FLAG_SECURE, five-minute handoff) or from NFC reader mode (IsoDep select of AID F0454E49474D4101, then chunked reads). Android disables reader mode whenever the activity pauses (for example the QR scanner); MainActivity.onResume re-arms it while the recipient is still waiting, otherwise the phone would read the owner as an "Empty tag" (fixed in 0.6.0 after phone testing). After parsing it shows the check code. Hotspot mode on API 29+ uses WifiNetworkSpecifier + ConnectivityManager.requestNetwork (no Internet capability, 60-second timeout, 90-second handoff for the system prompt); API 26–28 shows the SSID/passphrase for manual connection. Same-Wi-Fi mode uses the current Wi-Fi network. The socket is bound to that Network and connects to the QKB1 address, then the network's private gateway. LocalJoinSession runs request → invitation → receipt → done. The accept callback verifies QKG4, requires the QKB1 owner, then shows the check code and owner fingerprint for **Join group**.
+Groups → Join group offers **Nearby: scan or tap** (recommended), **By Signal or file: make my request** and **By Signal or file: open the invitation**; the nearby screen's button is **Scan QR code**, matching the owner's on-screen instructions. Nearby creates a fresh signed QKJ4, then accepts QKB1 from the ZXing ScanContract (SecureCaptureActivity, FLAG_SECURE, five-minute handoff) or from NFC reader mode (IsoDep select of AID F0454E49474D4101, then chunked reads). Android disables reader mode whenever the activity pauses (for example the QR scanner); MainActivity.onResume re-arms it while the recipient is still waiting, otherwise the phone would read the owner as an "Empty tag" (fixed in 0.6.0 after phone testing). After parsing it shows the check code. Hotspot mode on API 29+ uses WifiNetworkSpecifier + ConnectivityManager.requestNetwork (no Internet capability, 60-second timeout, 90-second handoff for the system prompt); API 26–28 shows the SSID/passphrase for manual connection. Same-Wi-Fi mode uses the current Wi-Fi network. The socket is bound to that Network and connects to the QKB1 address, then the network's private gateway. LocalJoinSession runs request → invitation → receipt → done. The accept callback verifies QKG4, requires the QKB1 owner, then shows the check code and owner fingerprint for **Join group**.
 
 ### Shared rules
 
-B checks its active request, intended fingerprint, signatures, lifetime, GCM, owner-signed roster and membership before committing trust; all member public keys import together and duplicate groups are refused. Consumed joining IDs are retained separately from groups. The owner shows Invited until QKA4 or B's first verified message. The optional receipt cannot grant membership.
+B checks its active request, intended fingerprint, signatures, lifetime, GCM, owner-signed roster and membership before committing trust; all member public keys import together and duplicate groups are refused. Consumed joining IDs are retained separately from groups. The owner shows Invited until QKA4 (nearby) or B's first verified message, which also clears B's cached invitation. The receipt cannot grant membership.
 
 The encrypted vault retains at most 64 pending invitation records (exact request, group, member, ciphertext, expiry and roster revision). A consumed request may resume only its still-pending exact grant with the member present and unblocked; an unchanged roster returns identical ciphertext. Removing a member or group, or a fresh request, cancels cached grants while the used-ID ledger (maximum 10,000) is kept. A stale receipt cannot confirm a replacement grant.
 
 LocalJoinWire EJW1 uses a 4-byte magic, 1-byte mode, 1-byte type, 4-byte per-direction sequence and 4-byte length. Payload limits follow the packet limits above; Done is exactly "Joined". Encrypted bodies add a 12-byte nonce and 16-byte tag. Ordering, direction, type, sequence, downgrade and size are enforced. Cancel, lock, background or destruction closes transport and cancels approvals. No background listener is installed except the NFC host card emulation service, which serves nothing unless an invite screen is open.
 
-### Manual file transfer
+### Remote joining by file (Signal, email, USB)
 
-Request (QKJ4), invitation (QKG4) and receipt (QKA4) are saved as small text files through the system document picker or copied as text, and opened through ACTION_OPEN_DOCUMENT (bounded, whitespace removed). This supports USB cables via a computer and any other transfer. Because the carrier is unauthenticated, both sides show a six-digit check code, SHA-256("Enigma/manual-check/v1" || request || owner public key); the owner sees it when approving, the joiner when opening the invitation, and they compare it in person or on a call. Saving the request reuses the active unconsumed request; opening the same request file again on the owner returns the cached grant.
+Implemented in 1.1.0, replacing the 1.0.0 manual transfer (five-minute request, live check-code comparison, confirmation file).
+
+```mermaid
+sequenceDiagram
+  participant B as Joining phone
+  participant A as Owner phone
+  Note over A,B: Agree a passphrase by voice (4+ words)
+  B->>B: QKJ4 request, 7-day lifetime; K = PBKDF2(phrase, SHA-256(domain || QKJ4)); store K in vault
+  B->>A: EJP1 tag(K,"request") . QKJ4 (share sheet: Signal, email, USB)
+  A->>A: Type phrase; derive K from received QKJ4; refuse unless tag matches; Invite
+  A->>B: EJP1 tag(K,"invitation") . QKG4 (encrypted to B, owner-signed)
+  B->>B: Refuse unless tag matches stored K; verify QKG4; Join
+  B->>A: First ENG5 message: owner marks B Joined
+```
+
+1. B: **Join group → By Signal or file: make my request** asks for the passphrase (JoinPhrase.requireStrong: at least 4 words and 16 characters after normalisation, which lower-cases and folds spaces, dashes, underscores, dots and commas). It makes a fresh QKJ4 with JoinProtocol.FILE_WINDOW (seven days), derives K (PBKDF2-HMAC-SHA-256, 310,000 iterations, 256-bit, salt SHA-256("Enigma/join-phrase/v1" || request)), stores the request in Vault.joiningRequest and K in Vault.joiningKey, and offers **Share** (FileProvider `enigma-join-request.enigma`, application/octet-stream) or **Save file**.
+2. A: opening the file from another app (ACTION_VIEW/SEND, handled after unlock; receiveFile routes files that start with `EJP1:`) or through **By Signal or file: open their request** asks which owned group (if more than one) and for the passphrase, verifies the tag with MessageDigest.isEqual, shows the device name and fingerprint, and on **Invite** runs JoiningFlow.invite unchanged, then tags QKG4 with the label "invitation" and shares `enigma-invitation.enigma`.
+3. B: opening the invitation verifies the tag with the stored K, then JoinProtocol.accept (unchanged checks), shows the owner fingerprint and member count, and commits on **Join**; commitJoin clears joiningRequest and joiningKey and records the request ID as used.
+4. B's first verified message marks B Joined on A and cancels the cached grant. There is no confirmation file. Nearby joining is unchanged (five minutes, check codes, QKA4 over the local link).
 
 ### Group membership and roster updates
 
@@ -197,15 +216,17 @@ Limits that remain:
 9. **Empty pool**: send using the backup key with a "reduced protection" mark rather than refuse.
 11. **Two algorithm families** (30 October 2026): to guard against a break in one algorithm, every key agreement combines X25519 with ML-KEM-768 (FIPS 203) and every packet signature combines Ed25519 with ML-DSA-65 (FIPS 204). Reading a message needs both agreement algorithms broken (and the group secret); forging one needs both signature algorithms broken. RSA was considered and rejected: it fails to the same quantum attack as X25519 and its key generation is too slow for one-time key pools. Costs: an ML-KEM public key is 1,184 bytes, each recipient entry gains 1,088 bytes, each signature is 3,373 bytes and each identity 2,016 bytes. Packet limits were raised to match.
 12. **Two-step unlock with wipe** (30 October 2026): passphrase or biometrics, then a 4-digit PIN. Five wrong PINs, or the panic PIN (default 9999, changeable), erase Enigma's keys and data. The PIN is part of the vault key, so a copied file cannot be PIN-guessed without the first step.
+13. **Remote joining by passphrase** (31 October 2026, owner request): joining by file uses a passphrase agreed by voice instead of a live check code, a seven-day request instead of five minutes, the share sheet instead of save-and-copy, and no confirmation file. "Never expire" was not adopted: a request works once, and seven days keeps an old file in a chat harmless.
 
 ## Verification and future work
 
-Executed build and test evidence is recorded in VERIFICATION.txt, not inferred from this design. Automated checks cover the pure-Java protocol classes (68 JVM tests at 1.0.0) and emulator PIN, vault and screenshot tests; physical-phone joining, messaging and the panic PIN were checked by the owner on two phones with the 0.7.0 build, and the 1.0.0 number pad has been checked on an emulator. Remaining manual checks are listed in TESTING.md.
+Executed build and test evidence is recorded in VERIFICATION.txt, not inferred from this design. Automated checks cover the pure-Java protocol classes (73 JVM tests at 1.1.0) and emulator PIN, vault and screenshot tests; physical-phone joining, messaging and the panic PIN were checked by the owner on two phones with the 0.7.0 build, and the 1.0.0 number pad has been checked on an emulator. Remaining manual checks are listed in TESTING.md.
 
 Planned work, not implemented: reserve replenishment; an explicit "Send group update" button; a second admin who can sign updates; replacing the group secret when a member is removed (decisions 1-3); chunked streaming for large files; a dedicated personal file vault or recovery design if requested; accessibility and device-size coverage; an independent security audit. These are not claims about the current build.
 
 ## Change log
 
+- 1.1.0 / 31 October 2026: remote joining by file (Signal or any app). Request and invitation carry an EJP1 HMAC tag keyed by PBKDF2 of a passphrase agreed by voice; remote requests last seven days (nearby stays five minutes); files are shared through the share sheet and open from other apps; the confirmation file is gone (first message confirms). New JoinPhrase class and Vault.joiningKey; QKJ4/QKG4 formats unchanged apart from the accepted lifetime.
 - 1.0.0 / 30 October 2026 (documentation): SYSTEM_DESIGN.md and SECURITY.md rewritten to describe only the 1.0.0 design; the 0.6.0 RSA, QKD3/file-v3 and QKJ1/QKG2/QKA1 sections were removed (they remain in git history).
 - 1.0.0 / 30 October 2026: first release version after phone testing of 0.7.0 (joining between two phones, JPEG sending, panic PIN, old-format file refused). PIN entry uses an in-app number pad; files that cannot be parsed (older format, other keys, damaged) show one plain explanation instead of "Invalid packet size". No protocol or storage change.
 - 0.7.0 / 30 October 2026 (branch, security review): removed or blocked members' keys are now deleted when they are no longer in any group on the device; prekey signature, root PIN-guessing, INTERNET permission and vault-key randomness limits documented.

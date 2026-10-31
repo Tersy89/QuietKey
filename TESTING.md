@@ -46,7 +46,7 @@ Run by the owner on two physical phones with the versionCode 12 build: joining b
 1. Install over 0.6.0 (or the earlier 0.7.0 test APK). After the passphrase, the app asks for a new PIN and panic PIN; then it shows "New keys needed" and keeps the old data. Start fresh asks for the passphrase and confirmation, then runs camera setup.
 1a. Lock and unlock: passphrase, then PIN. Enable biometric unlock again (setting the PIN turned it off); then fingerprint, then PIN. A wrong PIN shows the attempts left; a correct PIN resets the count.
 1b. On a phone whose Enigma data you do not need: five wrong PINs erase Enigma, and so does the panic PIN. The app should restart at "Protect Enigma".
-2. Join a second phone nearby (QR and NFC) and by file. Both phones should show matching check codes.
+2. Join a second phone nearby (QR and NFC; both phones should show matching check codes) and from a distance by Signal with a passphrase.
 3. Send a message from each phone to the other. Neither should say "Reduced protection". Opening the same .enigma file a second time shows the stored copy.
 4. Join a third phone. After the owner sends any message to the second phone, the second and third phones message each other without "Reduced protection".
 5. Send one message to two people. Both open it; a third member gets "not addressed to you".
@@ -112,12 +112,13 @@ Update both phones to 0.5.0 (installs over 0.4.4; same debug signer). Owner crea
 6. Expiry: send with 5 minutes; an open message closes when it expires and can no longer be opened.
 7. Background while a photo is open: Enigma locks and the photo is gone after unlock.
 
-## Manual transfer — phone checks
+## Joining from a distance — phone checks
 
-1. Recipient: Join group → By file: save my request. Copy it to the owner over USB via a computer.
-2. Owner: Invite new recipient → By file: open their request; note the check code; Invite → Save file. Copy the invitation back.
-3. Recipient: open the owner's invitation file; the check code must match the owner's. Join; Save confirmation file; owner opens it and shows Joined.
-4. Negative: open the wrong file type, an invitation meant for another phone, a request older than five minutes, a modified file. All must be refused.
+1. Agree a four-word passphrase by voice. Recipient: Join group → By Signal or file: make my request → passphrase → Share → Signal to the owner.
+2. Owner: tap the file in Signal; Enigma opens (unlock first), asks which group if it owns several, then the passphrase; Invite → Share → Signal back.
+3. Recipient: tap the invitation in Signal → Join. Send the owner a message; the owner's Manage members shows the recipient as Joined.
+4. Repeat with Save file and a USB copy instead of Signal, and with the owner using Invite new recipient → By Signal or file: open their request.
+5. Negative: a short phrase (refused before anything is made), a wrong phrase on either side, a request file opened on a phone that owns no group, an invitation opened on a phone with no waiting request, the same request opened twice for two groups, a modified file. All must be refused with a plain message.
 
 ## README screenshots
 
